@@ -6,23 +6,25 @@ import android.content.Intent
 import android.provider.Settings as AndroidSettings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.CheckboxDefaults
-import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -32,8 +34,11 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.core.net.toUri
 import androidx.lifecycle.compose.LifecycleResumeEffect
@@ -43,7 +48,6 @@ import io.github.christiantwu.longhand.engine.Models
 
 @Composable
 fun SetupScreen(vm: AppViewModel, onDone: () -> Unit) {
-    val ink = LocalInk.current
     val context = LocalContext.current
     val settings by vm.settings.collectAsStateWithLifecycle()
     val speechReady by vm.speechReady.collectAsStateWithLifecycle()
@@ -66,37 +70,43 @@ fun SetupScreen(vm: AppViewModel, onDone: () -> Unit) {
     val folderChosen = settings?.folderUri != null && device.folderAccessible
 
     Column(
-        Modifier.fillMaxSize().safeDrawingPadding().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 16.dp),
+        Modifier.fillMaxSize().safeDrawingPadding().verticalScroll(rememberScrollState()).padding(start = 16.dp, end = 16.dp, top = 40.dp, bottom = 32.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Logo(30.dp)
-        Spacer(Modifier.height(18.dp))
-        Text("Longhand", style = MaterialTheme.typography.displaySmall, color = ink.ink)
-        Spacer(Modifier.height(4.dp))
-        MonoLabel("Get it in writing")
-        Spacer(Modifier.height(12.dp))
-        GradientRule()
-        Spacer(Modifier.height(12.dp))
-        Text("Calls are transcribed and summarized on this phone. Nothing is uploaded.",
-            style = MaterialTheme.typography.bodyMedium, color = ink.muted)
-        Spacer(Modifier.height(8.dp))
+        Column(Modifier.padding(bottom = 12.dp)) {
+            Logo(40.dp)
+            Text("Longhand", style = MaterialTheme.typography.headlineLarge, color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.padding(top = 20.dp).semantics { heading() })
+            MonoLabel("Get it in writing", Modifier.padding(top = 4.dp))
+            GradientRule(Modifier.padding(top = 14.dp))
+            Text("Calls are transcribed and summarized on this phone. Nothing is uploaded.",
+                style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 14.dp))
+        }
 
         Step(
-            "01", "Recordings folder", done = folderChosen,
+            "01", "Recordings folder", done = folderChosen, mono = folderChosen,
             body = if (folderChosen) FolderScanner.displayPath(settings!!.folderUri!!.toUri())
             else "Where your calls are saved. GrapheneOS uses Recordings/CallRecordings.",
-        ) { InkLink(if (folderChosen) "Change" else "Choose folder", { pickFolder.launch(FolderScanner.defaultFolder) }) }
+        ) { TextAction(if (folderChosen) "Change" else "Choose folder", { pickFolder.launch(FolderScanner.defaultFolder) }) }
 
         Step(
             "02", "Transcription models", done = speechReady,
             body = "Calls are transcribed on the phone. Choose the language of your calls; you can change it later in Settings.",
-            content = { LanguageChoice(settings?.language ?: Models.Language.ENGLISH, vm) },
+            content = {
+                // The language rows sit on the card's colour, so lift them a tone to keep the rows and their gaps visible.
+                val c = MaterialTheme.colorScheme
+                MaterialTheme(colorScheme = c.copy(surfaceContainer = c.surfaceContainerHighest)) {
+                    LanguageChoice(settings?.language ?: Models.Language.ENGLISH, vm, Modifier.padding(top = 8.dp))
+                }
+            },
         ) {}
 
         Step(
             "03", "Caller names", done = device.callLog && device.contacts, optional = true,
             body = "Matches each recording to your call log and shows the contact's name. Nothing is shared.",
         ) {
-            if (!(device.callLog && device.contacts)) InkLink("Allow", askCallerAccess)
+            if (!(device.callLog && device.contacts)) TextAction("Allow", askCallerAccess)
         }
 
         Step(
@@ -117,63 +127,64 @@ fun SetupScreen(vm: AppViewModel, onDone: () -> Unit) {
                 "calls\"; it only uses this to notice when a call ends and can't place or answer calls. Unrestricted battery use " +
                 "lets the work finish in the background.",
         ) {
-            if (!device.phoneState) InkLink("Allow phone access", askPhone)
-            if (!device.batteryUnrestricted) InkLink("Allow background use", { requestBatteryExemption(context) })
+            if (!device.phoneState) TextAction("Allow phone access", askPhone)
+            if (!device.batteryUnrestricted) TextAction("Allow background use", { requestBatteryExemption(context) })
         }
 
         Step(
             "06", "Notifications", done = device.notifications, optional = true,
             body = "Shows progress, and the topic of each call when it's ready.",
-        ) { if (!device.notifications) InkLink("Allow", askNotifications) }
+        ) { if (!device.notifications) TextAction("Allow", askNotifications) }
 
-        Row(
-            Modifier.fillMaxWidth().padding(vertical = 12.dp)
-                .toggleable(value = includeExisting, role = Role.Checkbox, onValueChange = { includeExisting = it }),
-            verticalAlignment = Alignment.CenterVertically,
+        GroupRow(
+            groupShape(0, 1),
+            action = Modifier.toggleable(value = includeExisting, role = Role.Checkbox, onValueChange = { includeExisting = it }),
         ) {
-            Checkbox(checked = includeExisting, onCheckedChange = null,
-                colors = CheckboxDefaults.colors(checkedColor = ink.ink, checkmarkColor = ink.paper, uncheckedColor = ink.faint))
-            Spacer(Modifier.width(10.dp))
-            Text("Also transcribe recordings already in the folder", style = MaterialTheme.typography.bodyMedium, color = ink.ink)
+            Checkbox(checked = includeExisting, onCheckedChange = null)
+            RowText("Also transcribe recordings already in the folder")
         }
 
-        InkButton("Start", onClick = { vm.finishSetup(includeExisting, onDone) }, enabled = folderChosen && speechReady,
-            modifier = Modifier.fillMaxWidth())
-        Spacer(Modifier.height(8.dp))
-        if (!(folderChosen && speechReady)) {
-            Text("Choose the folder and download the transcription models to start. The other steps can wait.",
-                style = MaterialTheme.typography.bodySmall, color = ink.faint)
+        Column(Modifier.padding(top = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            PrimaryButton("Start", onClick = { vm.finishSetup(includeExisting, onDone) }, enabled = folderChosen && speechReady,
+                modifier = Modifier.fillMaxWidth())
+            if (!(folderChosen && speechReady)) {
+                Text("Choose the folder and download the transcription models to start. The other steps can wait.",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 16.dp))
+            }
         }
     }
 }
 
+/** A setup step as a card: its number and state, what it's for, [content] such as a choice, and its actions. */
 @Composable
 private fun Step(
     number: String, title: String, done: Boolean, body: String,
-    optional: Boolean = false, progress: Float? = null,
+    optional: Boolean = false, mono: Boolean = false, progress: Float? = null,
     content: @Composable () -> Unit = {},
     action: @Composable () -> Unit,
 ) {
-    val ink = LocalInk.current
-    Column {
-        Row(Modifier.fillMaxWidth().padding(vertical = 14.dp), verticalAlignment = Alignment.Top) {
-            Text(number, style = InkType.clock, color = if (done) ink.violet else ink.faint, modifier = Modifier.width(32.dp).padding(top = 3.dp))
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(title, style = MaterialTheme.typography.titleMedium, color = ink.ink, modifier = Modifier.weight(1f))
-                    when {
-                        done -> MonoLabel("Done", color = ink.violet)
-                        optional -> MonoLabel("Optional", color = ink.faint)
-                    }
+    val c = MaterialTheme.colorScheme
+    Column(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(c.surfaceContainer).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(number, style = EditorialType.label, color = c.primary, modifier = Modifier.weight(1f))
+            when {
+                done -> Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Icon(Icons.Filled.Check, contentDescription = null, tint = c.primary, modifier = Modifier.size(16.dp))
+                    MonoLabel("Done", color = c.primary)
                 }
-                Text(body, style = MaterialTheme.typography.bodySmall, color = ink.muted)
-                content()
-                if (progress != null) GradientProgress(progress, Modifier.padding(top = 6.dp))
-                // Pull the link back by its own padding so its text lines up with the body text.
-                Row(Modifier.padding(top = 2.dp).offset(x = (-8).dp)) { action() }
+                optional -> MonoLabel("Optional")
             }
         }
-        HorizontalDivider(color = ink.line)
+        Text(title, style = MaterialTheme.typography.titleLarge, color = c.onSurface, modifier = Modifier.semantics { heading() })
+        Text(body, style = if (mono) EditorialType.time else MaterialTheme.typography.bodyMedium, color = c.onSurfaceVariant)
+        content()
+        if (progress != null) ProgressLine(progress, Modifier.padding(top = 8.dp, bottom = 4.dp))
+        // Pull the actions back by their own padding so their text lines up with the body text.
+        FlowRow(Modifier.offset(x = (-12).dp)) { action() }
     }
 }
 

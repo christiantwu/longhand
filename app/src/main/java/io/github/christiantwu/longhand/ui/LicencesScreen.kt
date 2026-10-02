@@ -1,21 +1,21 @@
 package io.github.christiantwu.longhand.ui
 
 import android.content.Context
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -25,7 +25,9 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -105,9 +107,10 @@ private val groupTitles = mapOf(
 
 @Composable
 fun LicencesScreen(onBack: () -> Unit) {
-    val ink = LocalInk.current
+    val c = MaterialTheme.colorScheme
     val context = LocalContext.current
     val entries = remember { Licences.load(context) }
+    val groups = remember(entries) { entries.groupBy { it.group } }
     var open by rememberSaveable { mutableStateOf<String?>(null) }
     // Some notices run to hundreds of kilobytes, so they're read off the main thread, once per opened entry.
     val openChunks by produceState(emptyList<String>(), open) {
@@ -117,51 +120,70 @@ fun LicencesScreen(onBack: () -> Unit) {
     }
 
     LazyColumn(Modifier.fillMaxSize().safeDrawingPadding(), contentPadding = PaddingValues(bottom = 32.dp)) {
-        item { InkTopBar(left = { InkIconButton(Icons.AutoMirrored.Filled.ArrowBack, "Back", onBack) }) }
+        item { AppBar(navigation = { BackButton(onBack) }) }
         item {
-            Column(Modifier.padding(horizontal = 20.dp)) {
-                Text("Open-source licences", style = MaterialTheme.typography.headlineMedium, color = ink.ink)
-                Spacer(Modifier.height(10.dp))
-                GradientRule()
-                Spacer(Modifier.height(12.dp))
+            Column {
+                ScreenTitle("Open-source licences")
                 Text(
                     "Longhand is free software, copyright © 2026 Christian Wu. You can redistribute and modify it under " +
                         "the GNU General Public License, version 3 or later. It comes with ABSOLUTELY NO WARRANTY. " +
                         "Tap an entry to read its licence.",
-                    style = MaterialTheme.typography.bodySmall, color = ink.muted,
+                    style = MaterialTheme.typography.bodyMedium, color = c.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp),
                 )
             }
         }
-        entries.forEachIndexed { i, e ->
-            if (i == 0 || entries[i - 1].group != e.group) groupTitles[e.group]?.let { (title, note) ->
-                item(key = "group-" + e.group) {
-                    Column(Modifier.padding(start = 20.dp, end = 20.dp, top = 26.dp, bottom = 4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                        MonoLabel(title)
-                        if (note != null) Text(note, style = MaterialTheme.typography.bodySmall, color = ink.faint)
+        groups.entries.forEachIndexed { g, (group, list) ->
+            val (title, note) = groupTitles[group] ?: (null to null)
+            // The space above each group, with its header when it has one.
+            item(key = "group-$group") {
+                Column(
+                    Modifier.padding(start = 16.dp, end = 16.dp, top = if (g == 0) 20.dp else 26.dp, bottom = if (title != null) 10.dp else 0.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    if (title != null) SectionHeader(title)
+                    if (note != null) Text(note, style = MaterialTheme.typography.bodySmall, color = c.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 16.dp))
+                }
+            }
+            list.forEachIndexed { i, e ->
+                val expandable = e.file.isNotBlank()
+                val top = if (i == 0) OuterCorner else InnerCorner
+                val bottom = if (i == list.lastIndex) OuterCorner else InnerCorner
+                // An opened entry's text continues its card, so the row hands its bottom corners to the text's end.
+                val rowBottom = if (open == e.key && openChunks.isNotEmpty()) 0.dp else bottom
+                item(key = e.key) {
+                    GroupRow(
+                        RoundedCornerShape(topStart = top, topEnd = top, bottomStart = rowBottom, bottomEnd = rowBottom),
+                        Modifier.padding(start = 16.dp, end = 16.dp, top = if (i > 0) GroupGap else 0.dp),
+                        onClick = if (expandable) ({ open = if (open == e.key) null else e.key }) else null,
+                        verticalAlignment = Alignment.Top,
+                    ) {
+                        RowText(listOf(e.name, e.version).filter { it.isNotBlank() }.joinToString(" ")) {
+                            MonoLabel(e.license, Modifier.padding(vertical = 2.dp), color = c.primary)
+                            if (e.copyright.isNotBlank()) Text(e.copyright, style = MaterialTheme.typography.bodyMedium, color = c.onSurfaceVariant)
+                            if (e.source.isNotBlank()) Text(e.source, style = EditorialType.time, color = c.onSurfaceVariant)
+                        }
+                        if (expandable) Icon(if (open == e.key) Icons.Filled.KeyboardArrowUp else Icons.Filled.KeyboardArrowDown,
+                            contentDescription = null, tint = c.onSurfaceVariant)
+                    }
+                }
+                if (open == e.key) {
+                    itemsIndexed(openChunks) { n, chunk ->
+                        val last = n == openChunks.lastIndex
+                        Text(
+                            chunk, style = EditorialType.clock.copy(lineHeight = 15.sp), color = c.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 16.dp).fillMaxWidth()
+                                .background(c.surfaceContainer, if (last) RoundedCornerShape(bottomStart = bottom, bottomEnd = bottom) else RectangleShape)
+                                .padding(start = 16.dp, end = 16.dp, top = 4.dp, bottom = if (last) 16.dp else 4.dp),
+                        )
                     }
                 }
             }
-            item(key = e.key) {
-                val expandable = e.file.isNotBlank()
-                Column(
-                    Modifier.fillMaxWidth()
-                        .then(if (expandable) Modifier.clickable { open = if (open == e.key) null else e.key } else Modifier)
-                        .padding(horizontal = 20.dp, vertical = 12.dp),
-                    verticalArrangement = Arrangement.spacedBy(2.dp),
-                ) {
-                    Text(listOf(e.name, e.version).filter { it.isNotBlank() }.joinToString(" "), style = MaterialTheme.typography.titleSmall, color = ink.ink)
-                    MonoLabel(e.license, color = ink.violet)
-                    if (e.copyright.isNotBlank()) Text(e.copyright, style = MaterialTheme.typography.bodySmall, color = ink.muted)
-                    if (e.source.isNotBlank()) Text(e.source, style = InkType.clock, color = ink.faint)
-                }
-            }
-            if (open == e.key) {
-                items(openChunks) { chunk ->
-                    Text(chunk, style = InkType.clock.copy(fontSize = 11.sp, lineHeight = 15.sp), color = ink.muted,
-                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp))
-                }
-            }
-            item(key = "div-" + e.key) { HorizontalDivider(Modifier.padding(start = 20.dp), color = ink.line) }
         }
     }
 }
+
+// groupShape's corners, needed apart so an opened entry's card can run on through its text.
+private val OuterCorner = 16.dp
+private val InnerCorner = 4.dp

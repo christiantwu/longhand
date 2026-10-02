@@ -3,14 +3,15 @@ package io.github.christiantwu.longhand.ui
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
+import androidx.compose.material3.dynamicDarkColorScheme
+import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
 import androidx.compose.ui.text.font.FontFamily
@@ -20,41 +21,20 @@ import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import io.github.christiantwu.longhand.R
 
-/** Paper & Ink: crisp type on paper, with the icon's coral-violet-sky gradient as a thin accent. */
+/**
+ * Editorial Material: Material You colours from the wallpaper and Material 3 components, set in
+ * Geist with mono captions, and the icon's coral-violet-sky gradient kept as a thin rule under titles.
+ */
 @Immutable
-data class Ink(
-    val paper: Color,
-    val ink: Color,
-    val muted: Color,
-    val faint: Color,
-    val line: Color,
-    val raised: Color,
-    val coral: Color,
-    val violet: Color,
-    val sky: Color,
-    /** Speaker label colours: the other person, and you. */
-    val them: Color,
-    val me: Color,
-    val danger: Color,
-) {
-    val gradient: Brush get() = Brush.horizontalGradient(listOf(coral, violet, sky))
-}
-
-private val LightInk = Ink(
-    paper = Color(0xFFFFFFFF), ink = Color(0xFF0E1024), muted = Color(0xFF565B73), faint = Color(0xFF8A8FA5),
-    line = Color(0xFFE8E9F0), raised = Color(0xFFF5F4FB),
-    coral = Color(0xFFF0684A), violet = Color(0xFF9B5CF0), sky = Color(0xFF3D8BFF),
-    them = Color(0xFFD4512F), me = Color(0xFF3D6FE0), danger = Color(0xFFC4321C),
+data class Editorial(
+    /** The brand gradient: the same on every wallpaper. */
+    val gradient: Brush,
 )
 
-private val DarkInk = Ink(
-    paper = Color(0xFF0D0F1A), ink = Color(0xFFECEEF6), muted = Color(0xFFA3A8BF), faint = Color(0xFF737892),
-    line = Color(0xFF242739), raised = Color(0xFF161929),
-    coral = Color(0xFFFF8A6B), violet = Color(0xFFC08BFF), sky = Color(0xFF7DB8FF),
-    them = Color(0xFFFF9A7E), me = Color(0xFF8FB2FF), danger = Color(0xFFFF8A7A),
-)
+private val LightEditorial = Editorial(Brush.horizontalGradient(listOf(Color(0xFFF0684A), Color(0xFF9B5CF0), Color(0xFF3D8BFF))))
+private val DarkEditorial = Editorial(Brush.horizontalGradient(listOf(Color(0xFFFF8A6B), Color(0xFFC08BFF), Color(0xFF7DB8FF))))
 
-val LocalInk = staticCompositionLocalOf { LightInk }
+val LocalEditorial = staticCompositionLocalOf { LightEditorial }
 
 private fun variable(res: Int, weight: Int) =
     Font(res, FontWeight(weight), variationSettings = FontVariation.Settings(FontVariation.weight(weight)))
@@ -62,61 +42,60 @@ private fun variable(res: Int, weight: Int) =
 val Geist = FontFamily(listOf(400, 500, 600, 700).map { variable(R.font.geist, it) })
 val GeistMono = FontFamily(listOf(400, 500).map { variable(R.font.geist_mono, it) })
 
-/** Extra type styles the Material scale doesn't name. */
-object InkType {
-    /** Uppercase mono captions: kickers, day headers, timestamps. */
-    val label = TextStyle(fontFamily = GeistMono, fontWeight = FontWeight.Medium, fontSize = 11.sp, letterSpacing = 0.06.em)
-    val clock = TextStyle(fontFamily = GeistMono, fontWeight = FontWeight.Medium, fontSize = 11.sp)
-    /** Speaker names above transcript lines, set in small caps style. */
-    val speaker = TextStyle(fontFamily = Geist, fontWeight = FontWeight.SemiBold, fontSize = 11.sp, letterSpacing = 0.08.em)
+/** Type styles the Material scale doesn't name. */
+object EditorialType {
+    /** Mono captions: section headers, kickers, day headers. Set the text uppercase (MonoLabel does). */
+    val label = TextStyle(fontFamily = GeistMono, fontWeight = FontWeight.Medium, fontSize = 11.sp, lineHeight = 16.sp, letterSpacing = 0.06.em)
+    /** Times and durations in lists. */
+    val time = TextStyle(fontFamily = GeistMono, fontWeight = FontWeight.Medium, fontSize = 12.sp, lineHeight = 16.sp)
+    /** Timestamps beside transcript lines and under the player. */
+    val clock = TextStyle(fontFamily = GeistMono, fontWeight = FontWeight.Medium, fontSize = 11.sp, lineHeight = 16.sp)
+    /** Speaker names above transcript lines. Set the text uppercase. */
+    val speaker = TextStyle(fontFamily = Geist, fontWeight = FontWeight.SemiBold, fontSize = 11.sp, lineHeight = 16.sp, letterSpacing = 0.08.em)
 }
 
-private val InkTypography = Typography(
-    displaySmall = TextStyle(fontFamily = Geist, fontWeight = FontWeight.SemiBold, fontSize = 34.sp, lineHeight = 36.sp, letterSpacing = (-0.035).em),
-    headlineMedium = TextStyle(fontFamily = Geist, fontWeight = FontWeight.SemiBold, fontSize = 28.sp, lineHeight = 31.sp, letterSpacing = (-0.03).em),
-    headlineSmall = TextStyle(fontFamily = Geist, fontWeight = FontWeight.SemiBold, fontSize = 22.sp, lineHeight = 26.sp, letterSpacing = (-0.02).em),
-    titleLarge = TextStyle(fontFamily = Geist, fontWeight = FontWeight.SemiBold, fontSize = 20.sp, lineHeight = 24.sp, letterSpacing = (-0.01).em),
-    titleMedium = TextStyle(fontFamily = Geist, fontWeight = FontWeight.SemiBold, fontSize = 16.sp, lineHeight = 21.sp, letterSpacing = (-0.01).em),
-    titleSmall = TextStyle(fontFamily = Geist, fontWeight = FontWeight.SemiBold, fontSize = 15.sp, lineHeight = 20.sp, letterSpacing = (-0.01).em),
-    bodyLarge = TextStyle(fontFamily = Geist, fontWeight = FontWeight.Normal, fontSize = 16.sp, lineHeight = 24.sp),
-    bodyMedium = TextStyle(fontFamily = Geist, fontWeight = FontWeight.Normal, fontSize = 15.sp, lineHeight = 22.sp),
-    bodySmall = TextStyle(fontFamily = Geist, fontWeight = FontWeight.Normal, fontSize = 13.sp, lineHeight = 18.sp),
-    labelLarge = TextStyle(fontFamily = Geist, fontWeight = FontWeight.SemiBold, fontSize = 14.sp, lineHeight = 18.sp),
-    labelMedium = TextStyle(fontFamily = Geist, fontWeight = FontWeight.Medium, fontSize = 12.sp, lineHeight = 16.sp),
-    labelSmall = TextStyle(fontFamily = GeistMono, fontWeight = FontWeight.Medium, fontSize = 11.sp, lineHeight = 14.sp),
+private fun geist(weight: FontWeight, size: Int, line: Int, tracking: Double = 0.0) =
+    TextStyle(fontFamily = Geist, fontWeight = weight, fontSize = size.sp, lineHeight = line.sp, letterSpacing = tracking.em)
+
+/** The Material 3 type scale in Geist; headlines are a little tighter, as in the old design. */
+private val EditorialTypography = Typography(
+    displaySmall = geist(FontWeight.SemiBold, 36, 44, -0.02),
+    headlineLarge = geist(FontWeight.SemiBold, 32, 40, -0.02),
+    headlineMedium = geist(FontWeight.SemiBold, 28, 36, -0.02),
+    headlineSmall = geist(FontWeight.SemiBold, 24, 32, -0.01),
+    titleLarge = geist(FontWeight.SemiBold, 22, 28, -0.01),
+    titleMedium = geist(FontWeight.Medium, 16, 24),
+    titleSmall = geist(FontWeight.Medium, 14, 20),
+    bodyLarge = geist(FontWeight.Normal, 16, 24),
+    bodyMedium = geist(FontWeight.Normal, 14, 20),
+    bodySmall = geist(FontWeight.Normal, 12, 16),
+    labelLarge = geist(FontWeight.Medium, 14, 20),
+    labelMedium = geist(FontWeight.Medium, 12, 16),
+    labelSmall = geist(FontWeight.Medium, 11, 16),
 )
 
 @Composable
 fun AppTheme(content: @Composable () -> Unit) {
     val dark = isSystemInDarkTheme()
-    val ink = if (dark) DarkInk else LightInk
-    val base = if (dark) darkColorScheme() else lightColorScheme()
-    val scheme = base.copy(
-        primary = ink.ink, onPrimary = ink.paper,
-        primaryContainer = ink.raised, onPrimaryContainer = ink.ink,
-        secondary = ink.violet, onSecondary = ink.paper,
-        tertiary = ink.sky,
-        background = ink.paper, onBackground = ink.ink,
-        surface = ink.paper, onSurface = ink.ink,
-        surfaceVariant = ink.raised, onSurfaceVariant = ink.muted,
-        surfaceContainerLowest = ink.paper, surfaceContainerLow = ink.paper, surfaceContainer = ink.raised,
-        surfaceContainerHigh = ink.raised, surfaceContainerHighest = ink.raised,
-        outline = ink.line, outlineVariant = ink.line,
-        error = ink.danger,
-    )
-    CompositionLocalProvider(LocalInk provides ink) {
-        MaterialTheme(colorScheme = scheme, typography = InkTypography, content = content)
+    val context = LocalContext.current
+    // Wallpaper colours exist on every supported version (minSdk 31, Android 12).
+    val scheme = if (dark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+    CompositionLocalProvider(LocalEditorial provides if (dark) DarkEditorial else LightEditorial) {
+        MaterialTheme(colorScheme = scheme, typography = EditorialTypography, content = content)
     }
 }
 
-/** Colour for a speaker's name: you, the other person, then extra voices on conference calls. */
+/**
+ * Colour for a speaker's name: you in the primary colour, the other person in the tertiary one, and
+ * extra voices on conference calls in the secondary colour and then the plain secondary text colour.
+ */
 @Composable
 fun speakerColor(speaker: Int, owner: Int?): Color {
-    val ink = LocalInk.current
+    val c = MaterialTheme.colorScheme
     return when {
-        speaker == owner -> ink.me
-        owner == null && speaker == 0 -> ink.them
-        owner == null && speaker == 1 -> ink.me
-        else -> listOf(ink.them, ink.violet, ink.sky)[(speaker - if (owner != null && speaker > owner) 1 else 0).coerceAtLeast(0) % 3]
+        speaker == owner -> c.primary
+        owner == null && speaker == 0 -> c.tertiary
+        owner == null && speaker == 1 -> c.primary
+        else -> listOf(c.tertiary, c.secondary, c.onSurfaceVariant)[(speaker - if (owner != null && speaker > owner) 1 else 0).coerceAtLeast(0) % 3]
     }
 }

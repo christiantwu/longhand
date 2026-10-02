@@ -179,10 +179,12 @@ checks that the Kotlin code decides the same way.
 
 `design/icon/` holds the icon generator. `make_icon.py` writes the adaptive icon layers,
 the themed (monochrome) layer, the notification icon and the in-app logo from the geometry
-in `icon_concepts.py`. Edit the Python, not the generated XML. The UI style is "Paper &
-Ink": Geist and Geist Mono (bundled under the SIL Open Font License; the licence text ships in
-`app/src/main/assets/licenses/OFL-Geist.txt`), white or ink backgrounds, and the icon's
-coral-violet-sky gradient used as a thin accent.
+in `icon_concepts.py`. Edit the Python, not the generated XML. The UI style is "Editorial
+Material": Material 3 components and Material You colours from the wallpaper, set in Geist and
+Geist Mono (bundled under the SIL Open Font License; the licence text ships in
+`app/src/main/assets/licenses/OFL-Geist.txt`), with mono captions and the icon's
+coral-violet-sky gradient as a thin rule under titles. `ui/Theme.kt` and `ui/Components.kt` hold
+the shared pieces.
 
 ## Building
 
