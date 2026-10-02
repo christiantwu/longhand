@@ -1,0 +1,97 @@
+package io.github.christiantwu.longhand.data
+
+import androidx.room.ColumnInfo
+import androidx.room.Entity
+import androidx.room.ForeignKey
+import androidx.room.Index
+import androidx.room.PrimaryKey
+
+enum class RecordingStatus { PENDING, PROCESSING, DONE, FAILED, SKIPPED }
+
+/** NONE: no summary wanted yet (e.g. the summary model isn't installed). */
+enum class SummaryStatus { NONE, PENDING, PROCESSING, DONE, FAILED }
+
+@Entity(tableName = "recordings", indices = [Index(value = ["documentUri"], unique = true)])
+data class Recording(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val documentUri: String,
+    val displayName: String,
+    val sizeBytes: Long,
+    val lastModified: Long,
+    val status: RecordingStatus,
+    val durationMs: Long = 0,
+    val progress: Float = 0f,
+    /** Times processing started; a crash leaves the row PROCESSING and this counts it. */
+    val attempts: Int = 0,
+    val error: String? = null,
+    val transcribedAt: Long? = null,
+    val processingMs: Long? = null,
+
+    // Who the call was with: matched from the call log and contacts, or picked by hand.
+    val phoneNumber: String? = null,
+    val contactName: String? = null,
+    val contactLookupKey: String? = null,
+    /** android.provider.CallLog.Calls.TYPE (1 incoming, 2 outgoing, ...) when known. */
+    val callDirection: Int? = null,
+    /** The automatic caller lookup has run (reset when the user grants call log access). */
+    @ColumnInfo(defaultValue = "0") val callerChecked: Boolean = false,
+    /** Picked by hand; automatic lookups never overwrite it. */
+    @ColumnInfo(defaultValue = "0") val callerManual: Boolean = false,
+
+    /** The diarized speaker who is the phone's owner, from voice matching or "Me". */
+    val ownerSpeaker: Int? = null,
+    /** Set by hand ("Me" / "That's not me"); voice matching leaves it alone. */
+    @ColumnInfo(defaultValue = "0") val ownerManual: Boolean = false,
+
+    val topic: String? = null,
+    val summary: String? = null,
+    /** Follow-ups, one per line. */
+    val followUps: String? = null,
+    @ColumnInfo(defaultValue = "NONE") val summaryStatus: SummaryStatus = SummaryStatus.NONE,
+    /** Times a summary started; a crash leaves it PROCESSING and this counts it. */
+    @ColumnInfo(defaultValue = "0") val summaryAttempts: Int = 0,
+    /**
+     * The user asked for this one (Transcribe again, a correction, Transcribe now), so the
+     * battery rules don't hold it back. Cleared once its transcript and summary are done.
+     */
+    @ColumnInfo(defaultValue = "0") val requested: Boolean = false,
+    /** The [Pipeline] version that made the transcript; older ones are redone on the charger. */
+    @ColumnInfo(defaultValue = "1") val pipeline: Int = 0,
+    /** The "call transcribed" notification has gone out, or isn't wanted (a redo of an old transcript). */
+    @ColumnInfo(defaultValue = "1") val announced: Boolean = true,
+)
+
+/** Versions of the transcription pipeline. Transcripts made by an older one are redone on the charger. */
+object Pipeline {
+    /** 2 (0.5.0): band-limited resampling and an automatic speaker count. */
+    const val CURRENT = 2
+}
+
+@Entity(
+    tableName = "segments",
+    foreignKeys = [ForeignKey(Recording::class, ["id"], ["recordingId"], onDelete = ForeignKey.CASCADE)],
+    indices = [Index("recordingId")],
+)
+data class Segment(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val recordingId: Long,
+    val startMs: Long,
+    val endMs: Long,
+    val speaker: Int,
+    val text: String,
+)
+
+@Entity(
+    tableName = "speaker_names",
+    primaryKeys = ["recordingId", "speaker"],
+    foreignKeys = [ForeignKey(Recording::class, ["id"], ["recordingId"], onDelete = ForeignKey.CASCADE)],
+)
+data class SpeakerName(val recordingId: Long, val speaker: Int, val name: String)
+
+/** A voice fingerprint (speaker embedding) for one speaker in one recording. */
+@Entity(
+    tableName = "speaker_voices",
+    primaryKeys = ["recordingId", "speaker"],
+    foreignKeys = [ForeignKey(Recording::class, ["id"], ["recordingId"], onDelete = ForeignKey.CASCADE)],
+)
+class SpeakerVoice(val recordingId: Long, val speaker: Int, val embedding: ByteArray)

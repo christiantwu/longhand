@@ -1,0 +1,1006 @@
+Libraries inside libsherpa-onnx-jni.so
+
+The sherpa-onnx library in Longhand (version 1.13.8, the prebuilt Android release built by the k2-fsa project from tag v1.13.8, commit 11afbd009a7f8c08f4bcf2fc1b265d0df4670fbf) includes the code below. eSpeak NG and its ucd-tools are GPL-3.0-or-later and have their own entry. The full Apache License 2.0 text is under "sherpa-onnx", and the Mozilla Public License 2.0 text under "Eigen".
+
+================================================================================
+piper-phonemize 1.2.0 (csukuangfj fork, commit f3ff95afc03640bc1399e113e83361192a2fafb4)
+MIT
+https://github.com/csukuangfj/piper-phonemize
+--------------------------------------------------------------------------------
+MIT License
+
+Copyright (c) 2023 Michael Hansen
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+================================================================================
+uni-algo 0.8.1 (single-header copy inside piper-phonemize)
+Unlicense OR MIT
+https://github.com/uni-algo/uni-algo
+--------------------------------------------------------------------------------
+Public Domain License
+
+This is free and unencumbered software released into the public domain.
+
+Anyone is free to copy, modify, publish, use, compile, sell, or distribute this
+software, either in source code form or as a compiled binary, for any purpose,
+commercial or non-commercial, and by any means.
+
+In jurisdictions that recognize copyright laws, the author or authors of this
+software dedicate any and all copyright interest in the software to the public
+domain. We make this dedication for the benefit of the public at large and to
+the detriment of our heirs and successors. We intend this dedication to be an
+overt act of relinquishment in perpetuity of all present and future rights to
+this software under copyright law.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
+ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+MIT License
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+================================================================================
+kaldi-native-fbank 1.22.3
+Apache-2.0
+Copyright (c) 2022-2025 Xiaomi Corporation (Fangjun Kuang)
+Copyright (c) 2024 Brno University of Technology (Karel Vesely)
+Portions from Kaldi: Copyright 2009-2011 Karel Vesely, Petr Motlicek
+https://github.com/csukuangfj/kaldi-native-fbank
+
+================================================================================
+KISS FFT (commit febd4caeed32e33ad8b2e0bb5ea77542c40f18ec)
+BSD-3-Clause
+https://github.com/mborgerding/kissfft
+--------------------------------------------------------------------------------
+Copyright (c) 2003-2010 Mark Borgerding . All rights reserved.
+
+KISS FFT is provided under:
+
+  SPDX-License-Identifier: BSD-3-Clause
+
+Being under the terms of the BSD 3-clause "New" or "Revised" License,
+according with:
+
+  LICENSES/BSD-3-Clause
+
+Valid-License-Identifier: BSD-3-Clause
+SPDX-URL: https://spdx.org/licenses/BSD-3-Clause.html
+Usage-Guide:
+  To use the BSD 3-clause "New" or "Revised" License put the following SPDX
+  tag/value pair into a comment according to the placement guidelines in
+  the licensing rules documentation:
+    SPDX-License-Identifier: BSD-3-Clause
+License-Text:
+
+Copyright (c) <year> <owner> . All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification,
+are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice,
+this list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+this list of conditions and the following disclaimer in the documentation
+and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its contributors
+may be used to endorse or promote products derived from this software without
+specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE
+LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE
+USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+================================================================================
+whisper.cpp (FFT routines copied into kaldi-native-fbank)
+MIT
+https://github.com/ggml-org/whisper.cpp
+--------------------------------------------------------------------------------
+MIT License
+
+Copyright (c) 2023 Georgi Gerganov
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+================================================================================
+kaldi-decoder 0.3.0
+Apache-2.0
+Copyright (c) 2022-2023 Xiaomi Corporation
+Portions from Kaldi (see Kaldi below)
+https://github.com/k2-fsa/kaldi-decoder
+
+================================================================================
+kaldifst 1.8.0
+Apache-2.0
+Copyright (c) 2020-2023 Xiaomi Corporation (Fangjun Kuang)
+Portions from Kaldi (see Kaldi below)
+https://github.com/k2-fsa/kaldifst
+--------------------------------------------------------------------------------
+Legal Notices
+
+   NOTE (this is not from the Apache License): The copyright model is that
+   authors (or their employers, if noted in individual files) own their
+   individual contributions. The authors' contributions can be discerned
+   from the git history.
+
+================================================================================
+LLVM libc++ basic_filebuf (modified copy in kaldifst, via Kaldi)
+MIT (dual-licensed under MIT and the University of Illinois/NCSA licence)
+https://github.com/k2-fsa/kaldifst/blob/ab5bdd013bdf13921e6aeee77db5722ebf9955fb/kaldifst/csrc/basic-filebuf.h
+--------------------------------------------------------------------------------
+============================================================================
+libc++ License
+============================================================================
+
+The libc++ library is dual licensed under both the University of Illinois
+"BSD-Like" license and the MIT license.  As a user of this code you may
+choose to use it under either license.  As a contributor, you agree to allow
+your code to be used under both.
+
+Full text of the relevant licenses is included below.
+
+============================================================================
+
+University of Illinois/NCSA
+Open Source License
+
+Copyright (c) 2009-2014 by the contributors listed in CREDITS.TXT (included below)
+
+All rights reserved.
+
+Developed by:
+
+    LLVM Team
+
+    University of Illinois at Urbana-Champaign
+
+    http://llvm.org
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of
+this software and associated documentation files (the "Software"), to deal with
+the Software without restriction, including without limitation the rights to
+use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies
+of the Software, and to permit persons to whom the Software is furnished to do
+so, subject to the following conditions:
+
+    * Redistributions of source code must retain the above copyright notice,
+      this list of conditions and the following disclaimers.
+
+    * Redistributions in binary form must reproduce the above copyright notice,
+      this list of conditions and the following disclaimers in the
+      documentation and/or other materials provided with the distribution.
+
+    * Neither the names of the LLVM Team, University of Illinois at
+      Urbana-Champaign, nor the names of its contributors may be used to
+      endorse or promote products derived from this Software without specific
+      prior written permission.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL THE
+CONTRIBUTORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS WITH THE
+SOFTWARE.
+
+==============================================================================
+
+Copyright (c) 2009-2014 by the contributors listed in CREDITS.TXT (included below)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+
+==============================================================================
+
+This file is a partial list of people who have contributed to the LLVM/libc++
+project.  If you have contributed a patch or made some other contribution to
+LLVM/libc++, please submit a patch to this file to add yourself, and it will be
+done!
+
+The list is sorted by surname and formatted to allow easy grepping and
+beautification by scripts.  The fields are: name (N), email (E), web-address
+(W), PGP key ID and fingerprint (P), description (D), and snail-mail address
+(S).
+
+N: Saleem Abdulrasool
+E: compnerd@compnerd.org
+D: Minor patches and Linux fixes.
+
+N: Dimitry Andric
+E: dimitry@andric.com
+D: Visibility fixes, minor FreeBSD portability patches.
+
+N: Holger Arnold
+E: holgerar@gmail.com
+D: Minor fix.
+
+N: Ruben Van Boxem
+E: vanboxem dot ruben at gmail dot com
+D: Initial Windows patches.
+
+N: David Chisnall
+E: theraven at theravensnest dot org
+D: FreeBSD and Solaris ports, libcxxrt support, some atomics work.
+
+N: Marshall Clow
+E: mclow.lists@gmail.com
+E: marshall@idio.com
+D: C++14 support, patches and bug fixes.
+
+N: Bill Fisher
+E: william.w.fisher@gmail.com
+D: Regex bug fixes.
+
+N: Matthew Dempsky
+E: matthew@dempsky.org
+D: Minor patches and bug fixes.
+
+N: Google Inc.
+D: Copyright owner and contributor of the CityHash algorithm
+
+N: Howard Hinnant
+E: hhinnant@apple.com
+D: Architect and primary author of libc++
+
+N: Hyeon-bin Jeong
+E: tuhertz@gmail.com
+D: Minor patches and bug fixes.
+
+N: Argyrios Kyrtzidis
+E: kyrtzidis@apple.com
+D: Bug fixes.
+
+N: Bruce Mitchener, Jr.
+E: bruce.mitchener@gmail.com
+D: Emscripten-related changes.
+
+N: Michel Morin
+E: mimomorin@gmail.com
+D: Minor patches to is_convertible.
+
+N: Andrew Morrow
+E: andrew.c.morrow@gmail.com
+D: Minor patches and Linux fixes.
+
+N: Arvid Picciani
+E: aep at exys dot org
+D: Minor patches and musl port.
+
+N: Bjorn Reese
+E: breese@users.sourceforge.net
+D: Initial regex prototype
+
+N: Nico Rieck
+E: nico.rieck@gmail.com
+D: Windows fixes
+
+N: Jonathan Sauer
+D: Minor patches, mostly related to constexpr
+
+N: Craig Silverstein
+E: csilvers@google.com
+D: Implemented Cityhash as the string hash function on 64-bit machines
+
+N: Richard Smith
+D: Minor patches.
+
+N: Joerg Sonnenberger
+E: joerg@NetBSD.org
+D: NetBSD port.
+
+N: Stephan Tolksdorf
+E: st@quanttec.com
+D: Minor <atomic> fix
+
+N: Michael van der Westhuizen
+E: r1mikey at gmail dot com
+
+N: Klaas de Vries
+E: klaas at klaasgaaf dot nl
+D: Minor bug fix.
+
+N: Zhang Xiongpang
+E: zhangxiongpang@gmail.com
+D: Minor patches and bug fixes.
+
+N: Xing Xue
+E: xingxue@ca.ibm.com
+D: AIX port
+
+N: Zhihao Yuan
+E: lichray@gmail.com
+D: Standard compatibility fixes.
+
+N: Jeffrey Yasskin
+E: jyasskin@gmail.com
+E: jyasskin@google.com
+D: Linux fixes.
+
+================================================================================
+OpenFst 1.8.5 (csukuangfj fork, tag v1.8.5-2026-07-09)
+Apache-2.0
+https://github.com/csukuangfj/openfst
+--------------------------------------------------------------------------------
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use these files except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+Copyright 2005-2026 Google LLC.
+
+================================================================================
+Eigen 5.0.1
+MPL-2.0
+Copyright (C) 2008-2015 Gael Guennebaud, Copyright (C) 2008-2009 Benoit Jacob, and other Eigen contributors
+Source code: https://gitlab.com/libeigen/eigen/-/tree/5.0.1
+--------------------------------------------------------------------------------
+Eigen is primarily MPL2 licensed. See COPYING.MPL2 and these links:
+  http://www.mozilla.org/MPL/2.0/
+  http://www.mozilla.org/MPL/2.0/FAQ.html
+
+Some files contain third-party code under BSD or other MPL2-compatible licenses,
+whence the other COPYING.* files here.
+
+================================================================================
+simple-sentencepiece 0.7 (modified for Android by the sherpa-onnx build)
+Apache-2.0
+Copyright 2024 Wei Kang
+https://github.com/pkufool/simple-sentencepiece
+
+================================================================================
+darts-clone 0.32 (bundled in simple-sentencepiece)
+BSD-2-Clause
+https://github.com/s-yata/darts-clone
+--------------------------------------------------------------------------------
+The BSD 2-clause license
+
+Copyright (c) 2008-2014, Susumu Yata All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification,
+are permitted provided that the following conditions are met:
+
+Redistributions of source code must retain the above copyright notice, this list
+of conditions and the following disclaimer.
+
+Redistributions in binary form must reproduce the above copyright notice, this
+list of conditions and the following disclaimer in the documentation and/or
+other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF
+THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+================================================================================
+JSON for Modern C++ (nlohmann/json) 3.12.0
+MIT
+https://github.com/nlohmann/json
+--------------------------------------------------------------------------------
+MIT License 
+
+Copyright (c) 2013-2025 Niels Lohmann
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+The library contains:
+- the UTF-8 decoder from Bjoern Hoehrmann (MIT), Copyright (c) 2008-2009 Björn Hoehrmann <bjoern@hoehrmann.de>
+- a slightly modified version of the Grisu2 algorithm from Florian Loitsch (MIT), Copyright (c) 2009 Florian Loitsch
+- a copy of Hedley from Evan Nemerson (CC0-1.0)
+- parts of Google Abseil (Apache-2.0)
+
+================================================================================
+hclust-cpp / fastcluster (csukuangfj fork, tag 2026-02-25)
+BSD-2-Clause
+https://github.com/csukuangfj/hclust-cpp
+--------------------------------------------------------------------------------
+Copyright:
+  * fastcluster_dm.cpp & fastcluster_R_dm.cpp:
+     © 2011 Daniel Müllner <http://danifold.net>
+  * fastcluster.(h|cpp) & demo.cpp & plotresult.r:
+     © 2018 Christoph Dalitz <http://www.hsnr.de/ipattern/>
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
+
+  * Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
+  * Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+================================================================================
+Supertonic (text-to-speech code adapted into sherpa-onnx)
+MIT
+https://github.com/supertone-oss-archive/supertonic
+--------------------------------------------------------------------------------
+MIT License
+
+Copyright (c) 2025 Supertone Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+================================================================================
+CATT tashkeel tokenizer (ported into sherpa-onnx)
+Apache-2.0
+Copyright (c) 2025 Abjad AI (www.abjadai.sa)
+C++ port Copyright (c) 2026 Matias Lin
+https://github.com/abjadai/catt
+--------------------------------------------------------------------------------
+Its Arabic transliteration table follows Kenton Murray's Buckwalter implementation (https://github.com/KentonMurray/Buckwalter), which carries no licence statement.
+
+================================================================================
+OpenAI Whisper (word-timestamp logic re-implemented in sherpa-onnx)
+MIT
+https://github.com/openai/whisper
+--------------------------------------------------------------------------------
+MIT License
+
+Copyright (c) 2022 OpenAI
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+================================================================================
+Kaldi (code copied into sherpa-onnx and the libraries above)
+Apache-2.0
+https://github.com/kaldi-asr/kaldi
+--------------------------------------------------------------------------------
+ Update to legal notice, made Feb 2012, modified Sep 2013.  We would like to
+ clarify that we are using a convention where multiple names in the Apache
+ copyright headers, for example
+
+  // Copyright 2009-2012  Yanmin Qian  Arnab Ghoshal
+  //                2013  Vassil Panayotov
+
+ does not signify joint ownership of copyright of that file, except in cases
+ where all those names were present in the original release made in March 2011--
+ you can use the version history to work this out, if this matters to you.
+ Instead, we intend that those contributors who later modified the file, agree
+ to release their changes under the Apache license.  The conventional way of
+ signifying this is to duplicate the Apache headers at the top of each file each
+ time a change is made by a different author, but this would quickly become
+ impractical.
+
+ Where the copyright header says something like:
+
+ // Copyright    2013   Johns Hopkins University (author: Daniel Povey)
+
+ it is because the individual who wrote the code was at that institution as an
+ employee, so the copyright is owned by the university (and we will have checked
+ that the contributions were in accordance with the open-source policies of the
+ institutions concerned, including getting them vetted individually where
+ necessary).  From a legal point of view the copyright ownership is that of the
+ institution concerned, and the (author: xxx) in parentheses is just
+ informational, to identify the actual person who wrote the code, and is not
+ intended to have any legal implications.  In some cases, however, particularly
+ early on, we just wrote the name of the university or company concerned,
+ without the actual author's name in parentheses.  If you see something like
+
+ //  Copyright  2009-2012   Arnab Ghoshal  Microsoft Corporation
+
+ it does not imply that Arnab was working for Microsoft, it is because someone
+ else contributed to the file while working at Microsoft (this would be Daniel
+ Povey, in fact, who was working at Microsoft Research at the outset of the
+ project).
+
+ The list of authors of each file is in an essentially arbitrary order, but is
+ often chronological if they contributed in different years.
+
+ The original legal notice is below.  Note: we are continuing to modify it by
+ adding the names of new contributors, but at any given time, the list may
+ be out of date.
+
+---
+                          Legal Notices
+
+Each of the files comprising Kaldi v1.0 have been separately licensed by
+their respective author(s) under the terms of the Apache License v 2.0 (set
+forth below).  The source code headers for each file specifies the individual
+authors and source material for that file as well the corresponding copyright
+notice.  For reference purposes only: A cumulative list of all individual
+contributors and original source material as well as the full text of the Apache
+License v 2.0 are set forth below.
+
+Individual Contributors (in alphabetical order)
+
+      Albert Vernon
+      Alexander Solovets
+      Allen Guo
+      Ariya Rastrow
+      Arnab Ghoshal
+      Cisco Corporation
+      Daniel Galvez
+      Daniel Povey
+      Danijel Korzinek
+      David Snyder
+      Dogan Can
+      Eduardo Silva
+      Ewald Enzinger
+      Gaofeng Cheng
+      Gaurav Kumar
+      Georg Stemmer
+      Gilles Boulianne
+      Go Vivace Inc.
+      Guoguo Chen
+      Haihua Xu
+      Hainan Xu
+      Hendy Irawan
+      Hossein Hadian
+      Ilya Edrenkin
+      Jan "Yenda" Trmal
+      Jan Silovsky
+      Joachim Fainberg
+      Johns Hopkins University
+      Karel Vesely
+      Ke Li
+      Kirill Katsnelson
+      Lucas Ondel
+      Lukas Burget
+      Lv Hang
+      Matthew Maciejewski
+      Microsoft Corporation
+      Minhua Wu
+      Mirko Hannemann
+      Mohit Agarwal
+      Navdeep Jaitly
+      Nickolay V. Shmyrev
+      Omid Sadjadi
+      Ondrej Glembek
+      Ondrej Platek
+      Pavel Denisov
+      Pawel Swietojanski
+      Pegah Ghahremani
+      Peter Smit
+      Petr Motlicek
+      Petr Schwarz
+      Phonexia s.r.o.
+      Saarland University
+      Shinji Watanabe
+      Shiyin Kang
+      Tanel Alumae
+      Tom Ko
+      Vassil Panayotov
+      Vijayaditya Peddinti
+      Vimal Manohar
+      Vincent Nguyen
+      Xiaohui Zhang
+      Xingyu Na
+      Yajie Miao
+      Yanmin Qian
+      Yiming Wang
+      Yiwen Shao
+
+Other Source Material
+
+    This project includes a port and modification of materials from JAMA: A Java
+  Matrix Package under the following notice: "This software is a cooperative
+  product of The MathWorks and the National Institute of Standards and Technology
+  (NIST) which has been released to the public domain." This notice and the
+  original code is available at http://math.nist.gov/javanumerics/jama/
+
+   This project includes a modified version of code published in Malvar, H.,
+  "Signal processing with lapped transforms," Artech House, Inc., 1992.  The
+  current copyright holder, Henrique S. Malvar, has given his permission for the
+  release of this modified version under the Apache License 2.0.
+
+  This project includes material from the OpenFST Library v1.2.7 available at
+  http://www.openfst.org and released under the Apache License v. 2.0.
+
+  [OpenFst COPYING file begins here]
+
+    Licensed under the Apache License, Version 2.0 (the "License");
+    you may not use these files except in compliance with the License.
+    You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+    Unless required by applicable law or agreed to in writing, software
+    distributed under the License is distributed on an "AS IS" BASIS,
+    WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+    See the License for the specific language governing permissions and
+    limitations under the License.
+
+    Copyright 2005-2010 Google, Inc.
+
+  [OpenFst COPYING file ends here]
+
+
+ -------------------------------------------------------------------------
+
+                                 Apache License
+                           Version 2.0, January 2004
+                        http://www.apache.org/licenses/
+
+   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+
+   1. Definitions.
+
+      "License" shall mean the terms and conditions for use, reproduction,
+      and distribution as defined by Sections 1 through 9 of this document.
+
+      "Licensor" shall mean the copyright owner or entity authorized by
+      the copyright owner that is granting the License.
+
+      "Legal Entity" shall mean the union of the acting entity and all
+      other entities that control, are controlled by, or are under common
+      control with that entity. For the purposes of this definition,
+      "control" means (i) the power, direct or indirect, to cause the
+      direction or management of such entity, whether by contract or
+      otherwise, or (ii) ownership of fifty percent (50%) or more of the
+      outstanding shares, or (iii) beneficial ownership of such entity.
+
+      "You" (or "Your") shall mean an individual or Legal Entity
+      exercising permissions granted by this License.
+
+      "Source" form shall mean the preferred form for making modifications,
+      including but not limited to software source code, documentation
+      source, and configuration files.
+
+      "Object" form shall mean any form resulting from mechanical
+      transformation or translation of a Source form, including but
+      not limited to compiled object code, generated documentation,
+      and conversions to other media types.
+
+      "Work" shall mean the work of authorship, whether in Source or
+      Object form, made available under the License, as indicated by a
+      copyright notice that is included in or attached to the work
+      (an example is provided in the Appendix below).
+
+      "Derivative Works" shall mean any work, whether in Source or Object
+      form, that is based on (or derived from) the Work and for which the
+      editorial revisions, annotations, elaborations, or other modifications
+      represent, as a whole, an original work of authorship. For the purposes
+      of this License, Derivative Works shall not include works that remain
+      separable from, or merely link (or bind by name) to the interfaces of,
+      the Work and Derivative Works thereof.
+
+      "Contribution" shall mean any work of authorship, including
+      the original version of the Work and any modifications or additions
+      to that Work or Derivative Works thereof, that is intentionally
+      submitted to Licensor for inclusion in the Work by the copyright owner
+      or by an individual or Legal Entity authorized to submit on behalf of
+      the copyright owner. For the purposes of this definition, "submitted"
+      means any form of electronic, verbal, or written communication sent
+      to the Licensor or its representatives, including but not limited to
+      communication on electronic mailing lists, source code control systems,
+      and issue tracking systems that are managed by, or on behalf of, the
+      Licensor for the purpose of discussing and improving the Work, but
+      excluding communication that is conspicuously marked or otherwise
+      designated in writing by the copyright owner as "Not a Contribution."
+
+      "Contributor" shall mean Licensor and any individual or Legal Entity
+      on behalf of whom a Contribution has been received by Licensor and
+      subsequently incorporated within the Work.
+
+   2. Grant of Copyright License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      copyright license to reproduce, prepare Derivative Works of,
+      publicly display, publicly perform, sublicense, and distribute the
+      Work and such Derivative Works in Source or Object form.
+
+   3. Grant of Patent License. Subject to the terms and conditions of
+      this License, each Contributor hereby grants to You a perpetual,
+      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+      (except as stated in this section) patent license to make, have made,
+      use, offer to sell, sell, import, and otherwise transfer the Work,
+      where such license applies only to those patent claims licensable
+      by such Contributor that are necessarily infringed by their
+      Contribution(s) alone or by combination of their Contribution(s)
+      with the Work to which such Contribution(s) was submitted. If You
+      institute patent litigation against any entity (including a
+      cross-claim or counterclaim in a lawsuit) alleging that the Work
+      or a Contribution incorporated within the Work constitutes direct
+      or contributory patent infringement, then any patent licenses
+      granted to You under this License for that Work shall terminate
+      as of the date such litigation is filed.
+
+   4. Redistribution. You may reproduce and distribute copies of the
+      Work or Derivative Works thereof in any medium, with or without
+      modifications, and in Source or Object form, provided that You
+      meet the following conditions:
+
+      (a) You must give any other recipients of the Work or
+          Derivative Works a copy of this License; and
+
+      (b) You must cause any modified files to carry prominent notices
+          stating that You changed the files; and
+
+      (c) You must retain, in the Source form of any Derivative Works
+          that You distribute, all copyright, patent, trademark, and
+          attribution notices from the Source form of the Work,
+          excluding those notices that do not pertain to any part of
+          the Derivative Works; and
+
+      (d) If the Work includes a "NOTICE" text file as part of its
+          distribution, then any Derivative Works that You distribute must
+          include a readable copy of the attribution notices contained
+          within such NOTICE file, excluding those notices that do not
+          pertain to any part of the Derivative Works, in at least one
+          of the following places: within a NOTICE text file distributed
+          as part of the Derivative Works; within the Source form or
+          documentation, if provided along with the Derivative Works; or,
+          within a display generated by the Derivative Works, if and
+          wherever such third-party notices normally appear. The contents
+          of the NOTICE file are for informational purposes only and
+          do not modify the License. You may add Your own attribution
+          notices within Derivative Works that You distribute, alongside
+          or as an addendum to the NOTICE text from the Work, provided
+          that such additional attribution notices cannot be construed
+          as modifying the License.
+
+      You may add Your own copyright statement to Your modifications and
+      may provide additional or different license terms and conditions
+      for use, reproduction, or distribution of Your modifications, or
+      for any such Derivative Works as a whole, provided Your use,
+      reproduction, and distribution of the Work otherwise complies with
+      the conditions stated in this License.
+
+   5. Submission of Contributions. Unless You explicitly state otherwise,
+      any Contribution intentionally submitted for inclusion in the Work
+      by You to the Licensor shall be under the terms and conditions of
+      this License, without any additional terms or conditions.
+      Notwithstanding the above, nothing herein shall supersede or modify
+      the terms of any separate license agreement you may have executed
+      with Licensor regarding such Contributions.
+
+   6. Trademarks. This License does not grant permission to use the trade
+      names, trademarks, service marks, or product names of the Licensor,
+      except as required for reasonable and customary use in describing the
+      origin of the Work and reproducing the content of the NOTICE file.
+
+   7. Disclaimer of Warranty. Unless required by applicable law or
+      agreed to in writing, Licensor provides the Work (and each
+      Contributor provides its Contributions) on an "AS IS" BASIS,
+      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+      implied, including, without limitation, any warranties or conditions
+      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
+      PARTICULAR PURPOSE. You are solely responsible for determining the
+      appropriateness of using or redistributing the Work and assume any
+      risks associated with Your exercise of permissions under this License.
+
+   8. Limitation of Liability. In no event and under no legal theory,
+      whether in tort (including negligence), contract, or otherwise,
+      unless required by applicable law (such as deliberate and grossly
+      negligent acts) or agreed to in writing, shall any Contributor be
+      liable to You for damages, including any direct, indirect, special,
+      incidental, or consequential damages of any character arising as a
+      result of this License or out of the use or inability to use the
+      Work (including but not limited to damages for loss of goodwill,
+      work stoppage, computer failure or malfunction, or any and all
+      other commercial damages or losses), even if such Contributor
+      has been advised of the possibility of such damages.
+
+   9. Accepting Warranty or Additional Liability. While redistributing
+      the Work or Derivative Works thereof, You may choose to offer,
+      and charge a fee for, acceptance of support, warranty, indemnity,
+      or other liability obligations and/or rights consistent with this
+      License. However, in accepting such obligations, You may act only
+      on Your own behalf and on Your sole responsibility, not on behalf
+      of any other Contributor, and only if You agree to indemnify,
+      defend, and hold each Contributor harmless for any liability
+      incurred by, or claims asserted against, such Contributor by reason
+      of your accepting any such warranty or additional liability.
+
+   END OF TERMS AND CONDITIONS
+
+   APPENDIX: How to apply the Apache License to your work.
+
+      To apply the Apache License to your work, attach the following
+      boilerplate notice, with the fields enclosed by brackets "[]"
+      replaced with your own identifying information. (Don't include
+      the brackets!)  The text should be enclosed in the appropriate
+      comment syntax for the file format. We also recommend that a
+      file or class name and description of purpose be included on the
+      same "printed page" as the copyright notice for easier
+      identification within third-party archives.
+
+   Copyright [yyyy] [name of copyright owner]
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+
+================================================================================
+Unicode Character Database (tables in eSpeak NG, uni-algo and sherpa-onnx)
+Unicode-DFS-2016
+https://www.unicode.org/
+--------------------------------------------------------------------------------
+Unicode Data Files include all data files under the directories
+http://www.unicode.org/Public/, http://www.unicode.org/reports/,
+http://www.unicode.org/cldr/data/, http://source.icu-project.org/repos/icu/, and
+http://www.unicode.org/utility/trac/browser/.
+
+Unicode Data Files do not include PDF online code charts under the
+directory http://www.unicode.org/Public/.
+
+Software includes any source code published in the Unicode Standard
+or under the directories
+http://www.unicode.org/Public/, http://www.unicode.org/reports/,
+http://www.unicode.org/cldr/data/, http://source.icu-project.org/repos/icu/, and
+http://www.unicode.org/utility/trac/browser/.
+
+NOTICE TO USER: Carefully read the following legal agreement.
+BY DOWNLOADING, INSTALLING, COPYING OR OTHERWISE USING UNICODE INC.'S
+DATA FILES ("DATA FILES"), AND/OR SOFTWARE ("SOFTWARE"),
+YOU UNEQUIVOCALLY ACCEPT, AND AGREE TO BE BOUND BY, ALL OF THE
+TERMS AND CONDITIONS OF THIS AGREEMENT.
+IF YOU DO NOT AGREE, DO NOT DOWNLOAD, INSTALL, COPY, DISTRIBUTE OR USE
+THE DATA FILES OR SOFTWARE.
+
+COPYRIGHT AND PERMISSION NOTICE
+
+Copyright © 1991-2018 Unicode, Inc. All rights reserved.
+Distributed under the Terms of Use in http://www.unicode.org/copyright.html.
+
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of the Unicode data files and any associated documentation
+(the "Data Files") or Unicode software and any associated documentation
+(the "Software") to deal in the Data Files or Software
+without restriction, including without limitation the rights to use,
+copy, modify, merge, publish, distribute, and/or sell copies of
+the Data Files or Software, and to permit persons to whom the Data Files
+or Software are furnished to do so, provided that either
+(a) this copyright and permission notice appear with all copies
+of the Data Files or Software, or
+(b) this copyright and permission notice appear in associated
+Documentation.
+
+THE DATA FILES AND SOFTWARE ARE PROVIDED "AS IS", WITHOUT WARRANTY OF
+ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE
+WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT OF THIRD PARTY RIGHTS.
+IN NO EVENT SHALL THE COPYRIGHT HOLDER OR HOLDERS INCLUDED IN THIS
+NOTICE BE LIABLE FOR ANY CLAIM, OR ANY SPECIAL INDIRECT OR CONSEQUENTIAL
+DAMAGES, OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE,
+DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
+TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR
+PERFORMANCE OF THE DATA FILES OR SOFTWARE.
+
+Except as contained in this notice, the name of a copyright holder
+shall not be used in advertising or otherwise to promote the sale,
+use or other dealings in these Data Files or Software without prior
+written authorization of the copyright holder.

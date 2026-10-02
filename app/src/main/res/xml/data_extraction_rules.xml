@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Transcripts, settings and the voiceprint are included in backups the user turns on
+    (e.g. Seedvault). The models (~3.3 GB) are left out: the app downloads them again.
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="file" path="models/" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="file" path="models/" />
+    </device-transfer>
+</data-extraction-rules>

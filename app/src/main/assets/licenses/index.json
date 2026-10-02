@@ -1,0 +1,236 @@
+[
+  {
+    "group": "app",
+    "name": "Longhand",
+    "version": "",
+    "license": "GPL-3.0-or-later",
+    "copyright": "Copyright © 2026 Christian Wu",
+    "source": "https://github.com/christiantwu/longhand",
+    "file": "GPL-3.0.txt"
+  },
+  {
+    "group": "built-in",
+    "name": "sherpa-onnx",
+    "version": "1.13.8",
+    "license": "Apache-2.0",
+    "copyright": "Copyright (c) 2022-2026 Xiaomi Corporation and other sherpa-onnx contributors",
+    "source": "https://github.com/k2-fsa/sherpa-onnx",
+    "file": "Apache-2.0.txt"
+  },
+  {
+    "group": "built-in",
+    "name": "eSpeak NG (inside sherpa-onnx)",
+    "version": "1.52-dev",
+    "license": "GPL-3.0-or-later",
+    "copyright": "Copyright (C) 2005-2015 Jonathan Duddington, 2013-2020 Reece H. Dunn, 2018-2022 Juho Hiltunen and other eSpeak NG contributors. Includes ucd-tools, Copyright (C) 2012-2018, 2021 Reece H. Dunn. Its source code is at the address below, and a copy is attached to each Longhand release on GitHub.",
+    "source": "https://github.com/csukuangfj/espeak-ng/tree/ed530aa113046142eb5115cf2fc9157854d0ffe1",
+    "file": "GPL-3.0.txt"
+  },
+  {
+    "group": "built-in",
+    "name": "Libraries inside sherpa-onnx",
+    "version": "",
+    "license": "MIT, BSD, Apache-2.0, MPL-2.0, Unicode",
+    "copyright": "piper-phonemize, uni-algo, kaldi-native-fbank, KISS FFT, kaldi-decoder, kaldifst, OpenFst, Eigen, simple-sentencepiece, darts-clone, JSON for Modern C++, fastcluster, Kaldi and others",
+    "source": "",
+    "file": "sherpa-onnx-NOTICES.txt"
+  },
+  {
+    "group": "built-in",
+    "name": "ONNX Runtime",
+    "version": "1.28.2",
+    "license": "MIT",
+    "copyright": "Copyright (c) Microsoft Corporation. Portions copyright Amazon.com, Arm Limited, Intel Corporation, NVIDIA Corporation, FUJITSU LIMITED and Oracle.",
+    "source": "https://github.com/microsoft/onnxruntime",
+    "file": "onnxruntime-LICENSE.txt"
+  },
+  {
+    "group": "built-in",
+    "name": "Libraries inside ONNX Runtime",
+    "version": "",
+    "license": "Apache-2.0, BSD, MIT, MPL-2.0 and others",
+    "copyright": "Abseil, Protocol Buffers, ONNX, RE2, FlatBuffers, Eigen, KleidiAI, cpuinfo and others, in Microsoft's third-party notices for this release",
+    "source": "",
+    "file": "onnxruntime-ThirdPartyNotices.txt"
+  },
+  {
+    "group": "built-in",
+    "name": "More notices for ONNX Runtime",
+    "version": "",
+    "license": "Lucent, BSD, MPL-2.0, Apache-2.0, MIT, Unicode, CC-BY-3.0",
+    "copyright": "RE2's Plan 9 UTF-8 code, LIBSVM, Fabian Giesen's half-float conversions, Eigen's thread pool as modified by Microsoft, and other code that Microsoft's list leaves out",
+    "source": "",
+    "file": "onnxruntime-ADDITIONAL-NOTICES.txt"
+  },
+  {
+    "group": "built-in",
+    "name": "Eigen",
+    "version": "",
+    "license": "MPL-2.0",
+    "copyright": "Copyright (C) 2008-2015 Gael Guennebaud, 2008-2009 Benoit Jacob and other Eigen contributors. sherpa-onnx uses Eigen 5.0.1 and ONNX Runtime a development snapshot; their source code is at gitlab.com/libeigen/eigen (tag 5.0.1) and at the address below. A few Eigen files are under other licences; see \"More notices for ONNX Runtime\".",
+    "source": "https://github.com/eigen-mirror/eigen/tree/1d8b82b0740839c0de7f1242a3585e3390ff5f33",
+    "file": "MPL-2.0.txt"
+  },
+  {
+    "group": "built-in",
+    "name": "llama.cpp",
+    "version": "b11308",
+    "license": "MIT, Unicode-3.0, Unlicense",
+    "copyright": "Copyright (c) 2023-2026 The ggml authors. Includes code from llamafile, YaRN, Arm Optimized Routines, FP16 and ggllm.cpp.",
+    "source": "https://github.com/ggml-org/llama.cpp",
+    "file": "llama.cpp-NOTICES.txt"
+  },
+  {
+    "group": "built-in",
+    "name": "LLVM C++ runtime (Android NDK)",
+    "version": "",
+    "license": "Apache-2.0 WITH LLVM-exception",
+    "copyright": "The LLVM Project contributors",
+    "source": "https://github.com/llvm/llvm-project",
+    "file": "LLVM-LICENSE.txt"
+  },
+  {
+    "group": "built-in",
+    "name": "Android C runtime startup code (Android NDK)",
+    "version": "",
+    "license": "BSD-2-Clause",
+    "copyright": "Copyright (C) 2012-2015 The Android Open Source Project",
+    "source": "https://android.googlesource.com/platform/bionic",
+    "file": "bionic-NOTICE.txt"
+  },
+  {
+    "group": "built-in",
+    "name": "AndroidX and Jetpack Compose",
+    "version": "",
+    "license": "Apache-2.0",
+    "copyright": "Copyright (C) The Android Open Source Project. Activity, Compose (UI, Foundation, Material 3, Material Icons), Core, DataStore, Emoji2, Lifecycle, Media3, Navigation, Room, SQLite, WorkManager and their support libraries. Media3 includes the Sonic library, Copyright (C) 2010 Bill Cox.",
+    "source": "https://github.com/androidx/androidx",
+    "file": "Apache-2.0.txt"
+  },
+  {
+    "group": "built-in",
+    "name": "Kotlin standard library",
+    "version": "2.4.20",
+    "license": "Apache-2.0",
+    "copyright": "Copyright 2010-2024 JetBrains s.r.o. and Kotlin Programming Language contributors. Includes code derived from GWT, (C) 2007-08 Google Inc., and from Guava, (C) 2011 The Guava Authors.",
+    "source": "https://github.com/JetBrains/kotlin",
+    "file": "Apache-2.0.txt"
+  },
+  {
+    "group": "built-in",
+    "name": "kotlinx.coroutines",
+    "version": "1.11.0",
+    "license": "Apache-2.0",
+    "copyright": "kotlinx.coroutines library. Copyright 2016-2025 JetBrains s.r.o and contributors",
+    "source": "https://github.com/Kotlin/kotlinx.coroutines",
+    "file": "Apache-2.0.txt"
+  },
+  {
+    "group": "built-in",
+    "name": "kotlinx.collections.immutable (inside Compose)",
+    "version": "0.3.4",
+    "license": "Apache-2.0",
+    "copyright": "Copyright 2016-2019 JetBrains s.r.o.",
+    "source": "https://github.com/Kotlin/kotlinx.collections.immutable",
+    "file": "Apache-2.0.txt"
+  },
+  {
+    "group": "built-in",
+    "name": "Guava",
+    "version": "33.3.1-android",
+    "license": "Apache-2.0",
+    "copyright": "Copyright (C) The Guava Authors",
+    "source": "https://github.com/google/guava",
+    "file": "Apache-2.0.txt"
+  },
+  {
+    "group": "built-in",
+    "name": "FlatBuffers for Java (inside Emoji2)",
+    "version": "1.12.0",
+    "license": "Apache-2.0",
+    "copyright": "Copyright 2014 Google Inc.",
+    "source": "https://github.com/google/flatbuffers",
+    "file": "Apache-2.0.txt"
+  },
+  {
+    "group": "built-in",
+    "name": "Protocol Buffers Java Lite (inside DataStore)",
+    "version": "4.28.2",
+    "license": "BSD-3-Clause",
+    "copyright": "Copyright 2008 Google Inc.",
+    "source": "https://github.com/protocolbuffers/protobuf",
+    "file": "protobuf-LICENSE.txt"
+  },
+  {
+    "group": "built-in",
+    "name": "Geist and Geist Mono fonts",
+    "version": "",
+    "license": "OFL-1.1",
+    "copyright": "Copyright 2024 The Geist Project Authors",
+    "source": "https://github.com/vercel/geist-font",
+    "file": "OFL-Geist.txt"
+  },
+  {
+    "group": "models",
+    "name": "Parakeet TDT 0.6B v2",
+    "version": "int8",
+    "license": "CC-BY-4.0",
+    "copyright": "NVIDIA. Converted to ONNX by the sherpa-onnx project. Downloaded when English is chosen.",
+    "source": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2",
+    "file": ""
+  },
+  {
+    "group": "models",
+    "name": "Parakeet TDT 0.6B v3",
+    "version": "int8",
+    "license": "CC-BY-4.0",
+    "copyright": "NVIDIA. Converted to ONNX by the sherpa-onnx project. Downloaded when 25 European languages is chosen.",
+    "source": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3",
+    "file": ""
+  },
+  {
+    "group": "models",
+    "name": "SenseVoice Small",
+    "version": "int8",
+    "license": "FunASR Model License 1.1",
+    "copyright": "Copyright (C) 2023-2028 Alibaba Group (FunAudioLLM). Converted to ONNX by the sherpa-onnx project. Downloaded when Chinese, Japanese and Korean is chosen.",
+    "source": "https://huggingface.co/FunAudioLLM/SenseVoiceSmall",
+    "file": ""
+  },
+  {
+    "group": "models",
+    "name": "pyannote segmentation 3.0",
+    "version": "",
+    "license": "MIT",
+    "copyright": "pyannote",
+    "source": "https://huggingface.co/pyannote/segmentation-3.0",
+    "file": ""
+  },
+  {
+    "group": "models",
+    "name": "TitaNet-S speaker embeddings",
+    "version": "",
+    "license": "Apache-2.0",
+    "copyright": "NVIDIA, under the NeMo toolkit licence",
+    "source": "https://catalog.ngc.nvidia.com/orgs/nvidia/teams/nemo/models/titanet_small",
+    "file": ""
+  },
+  {
+    "group": "models",
+    "name": "Silero VAD",
+    "version": "",
+    "license": "MIT",
+    "copyright": "Copyright (c) 2020-present Silero Team",
+    "source": "https://github.com/snakers4/silero-vad",
+    "file": ""
+  },
+  {
+    "group": "models",
+    "name": "Qwen3.5 4B",
+    "version": "Q4_0",
+    "license": "Apache-2.0",
+    "copyright": "Qwen team, Alibaba Cloud. GGUF conversion by Unsloth.",
+    "source": "https://huggingface.co/Qwen/Qwen3.5-4B",
+    "file": ""
+  }
+]

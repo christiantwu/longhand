@@ -1,0 +1,180 @@
+More notices for ONNX Runtime
+
+Code inside libonnxruntime.so (ONNX Runtime 1.28.2, commit 33ca9628233dc8f002435e868d4c2e9f82766ca1) whose notices are not in Microsoft's third-party notices file for that release. Microsoft's file is the separate entry "Libraries inside ONNX Runtime"; it also covers the XNNPACK-derived fp16 kernels (activate_fp16.cpp), the Pillow resampling filters and the Hugging Face beam search.
+
+================================================================================
+ONNX Runtime contributors
+MIT (ONNX Runtime's licence)
+Copyright (c) Microsoft Corporation
+Copyright 2023 Amazon.com, Inc. or its affiliates
+Copyright 2024-2026 Arm Limited and/or its affiliates
+Copyright (c) Intel Corporation
+Copyright (c) 2023 NVIDIA Corporation
+Copyright 2025 FUJITSU LIMITED
+Copyright (c) 2019, 2022, Oracle and/or its affiliates
+https://github.com/microsoft/onnxruntime
+
+================================================================================
+Plan 9 UTF-8 routines (in RE2, util/rune.cc and util/utf.h)
+Lucent Technologies licence
+https://github.com/google/re2/blob/6dcd83d60f7944926bfd308cc13979fc53dd69ca/util/rune.cc
+--------------------------------------------------------------------------------
+The authors of this software are Rob Pike and Ken Thompson.
+             Copyright (c) 2002 by Lucent Technologies.
+Permission to use, copy, modify, and distribute this software for any
+purpose without fee is hereby granted, provided that this entire notice
+is included in all copies of any software which is or includes a copy
+or modification of this software and in all copies of the supporting
+documentation for such software.
+THIS SOFTWARE IS BEING PROVIDED "AS IS", WITHOUT ANY EXPRESS OR IMPLIED
+WARRANTY.  IN PARTICULAR, NEITHER THE AUTHORS NOR LUCENT TECHNOLOGIES MAKE ANY
+REPRESENTATION OR WARRANTY OF ANY KIND CONCERNING THE MERCHANTABILITY
+OF THIS SOFTWARE OR ITS FITNESS FOR ANY PARTICULAR PURPOSE.
+
+================================================================================
+LIBSVM (multiclass_probability in ONNX Runtime's SVM classifier)
+BSD-3-Clause
+https://github.com/cjlin1/libsvm
+--------------------------------------------------------------------------------
+Copyright (c) 2000-2011 Chih-Chung Chang and Chih-Jen Lin
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+
+1. Redistributions of source code must retain the above copyright
+notice, this list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright
+notice, this list of conditions and the following disclaimer in the
+documentation and/or other materials provided with the distribution.
+
+3. Neither name of copyright holders nor the names of its contributors
+may be used to endorse or promote products derived from this software
+without specific prior written permission.
+
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE REGENTS OR
+CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+================================================================================
+Half-precision conversion routines by Fabian Giesen (in Eigen and ONNX Runtime)
+BSD-style licence
+https://github.com/eigen-mirror/eigen/blob/1d8b82b0740839c0de7f1242a3585e3390ff5f33/Eigen/src/Core/arch/Default/Half.h
+--------------------------------------------------------------------------------
+Copyright (c) Fabian Giesen, 2016
+All rights reserved.
+Redistribution and use in source and binary forms, with or without
+modification, are permitted.
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+================================================================================
+Eigen BFloat16.h
+Apache-2.0
+Copyright 2017 The TensorFlow Authors. All Rights Reserved.
+https://github.com/eigen-mirror/eigen/blob/1d8b82b0740839c0de7f1242a3585e3390ff5f33/Eigen/src/Core/arch/Default/BFloat16.h
+--------------------------------------------------------------------------------
+The full Apache License 2.0 text is under "sherpa-onnx" in this list.
+
+================================================================================
+Eigen non-blocking thread pool, modified by Microsoft
+MPL-2.0
+Source code: https://github.com/microsoft/onnxruntime/blob/33ca9628233dc8f002435e868d4c2e9f82766ca1/include/onnxruntime/core/platform/EigenNonBlockingThreadPool.h
+--------------------------------------------------------------------------------
+This file is part of Eigen, a lightweight C++ template library
+for linear algebra.
+
+Copyright (C) 2016 Dmitry Vyukov <dvyukov@google.com>
+
+This Source Code Form is subject to the terms of the Mozilla
+Public License v. 2.0. If a copy of the MPL was not distributed
+with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
+
+Modifications Copyright (c) Microsoft.
+
+The full Mozilla Public License 2.0 text is under "Eigen" in this list.
+
+================================================================================
+JSON for Modern C++ (nlohmann/json) 3.11.3
+MIT
+https://github.com/nlohmann/json/tree/v3.11.3
+--------------------------------------------------------------------------------
+Copyright (c) 2013-2022 Niels Lohmann. Microsoft's notices carry the licence text.
+
+The library contains:
+- the UTF-8 decoder from Bjoern Hoehrmann (MIT), Copyright (c) 2008-2009 Björn Hoehrmann <bjoern@hoehrmann.de>
+- a slightly modified version of the Grisu2 algorithm from Florian Loitsch (MIT), Copyright (c) 2009 Florian Loitsch
+- a copy of Hedley from Evan Nemerson (CC0-1.0)
+- parts of Google Abseil (Apache-2.0)
+
+================================================================================
+Semantic Versioning 2.0.0 regular expression (ONNX Runtime core/common/semver.cc)
+CC-BY-3.0
+https://semver.org
+--------------------------------------------------------------------------------
+From the Semantic Versioning specification by Tom Preston-Werner, licensed under Creative Commons Attribution 3.0 (https://creativecommons.org/licenses/by/3.0/).
+
+================================================================================
+Unicode Character Database (tables in RE2, UCD 15.1.0)
+Unicode-3.0
+https://www.unicode.org/
+--------------------------------------------------------------------------------
+UNICODE LICENSE V3
+
+COPYRIGHT AND PERMISSION NOTICE
+
+Copyright © 1991-2023 Unicode, Inc.
+
+NOTICE TO USER: Carefully read the following legal agreement. BY
+DOWNLOADING, INSTALLING, COPYING OR OTHERWISE USING DATA FILES, AND/OR
+SOFTWARE, YOU UNEQUIVOCALLY ACCEPT, AND AGREE TO BE BOUND BY, ALL OF THE
+TERMS AND CONDITIONS OF THIS AGREEMENT. IF YOU DO NOT AGREE, DO NOT
+DOWNLOAD, INSTALL, COPY, DISTRIBUTE OR USE THE DATA FILES OR SOFTWARE.
+
+Permission is hereby granted, free of charge, to any person obtaining a
+copy of data files and any associated documentation (the "Data Files") or
+software and any associated documentation (the "Software") to deal in the
+Data Files or Software without restriction, including without limitation
+the rights to use, copy, modify, merge, publish, distribute, and/or sell
+copies of the Data Files or Software, and to permit persons to whom the
+Data Files or Software are furnished to do so, provided that either (a)
+this copyright and permission notice appear with all copies of the Data
+Files or Software, or (b) this copyright and permission notice appear in
+associated Documentation.
+
+THE DATA FILES AND SOFTWARE ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY
+KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT OF
+THIRD PARTY RIGHTS.
+
+IN NO EVENT SHALL THE COPYRIGHT HOLDER OR HOLDERS INCLUDED IN THIS NOTICE
+BE LIABLE FOR ANY CLAIM, OR ANY SPECIAL INDIRECT OR CONSEQUENTIAL DAMAGES,
+OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS,
+WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION,
+ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THE DATA
+FILES OR SOFTWARE.
+
+Except as contained in this notice, the name of a copyright holder shall
+not be used in advertising or otherwise to promote the sale, use or other
+dealings in these Data Files or Software without prior written
+authorization of the copyright holder.

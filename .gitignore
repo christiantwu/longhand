@@ -1,0 +1,18 @@
+.gradle/
+build/
+/app/build/
+# CMake/NDK build output for llama.cpp (sources are fetched at build time)
+.cxx/
+local.properties
+keystore.properties
+*.jks
+*.keystore
+.idea/
+*.iml
+.kotlin/
+/models/
+/dist/
+/app/libs/*.aar
+captures/
+__pycache__/
+/sample_recordings/
