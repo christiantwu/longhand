@@ -170,10 +170,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val speechModels = modelState(Models.Set.SPEECH)
     val multilingualModels = modelState(Models.Set.MULTILINGUAL)
     val cjkModels = modelState(Models.Set.CJK)
+    val hindiModels = modelState(Models.Set.HINDI)
     val summaryModel = modelState(Models.Set.SUMMARY)
 
     /** Calls can be transcribed: some language's models are in place. */
-    val speechReady: StateFlow<Boolean> = combine(speechModels, multilingualModels, cjkModels) { sets ->
+    val speechReady: StateFlow<Boolean> = combine(speechModels, multilingualModels, cjkModels, hindiModels) { sets ->
         sets.any { it.installed }
     }.stateIn(viewModelScope, SharingStarted.Eagerly, Models.speechReady(app))
 

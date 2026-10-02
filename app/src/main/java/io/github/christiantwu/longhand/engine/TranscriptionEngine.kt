@@ -1,6 +1,7 @@
 package io.github.christiantwu.longhand.engine
 
 import android.content.Context
+import android.os.SystemClock
 import android.util.Log
 import com.k2fsa.sherpa.onnx.FastClusteringConfig
 import com.k2fsa.sherpa.onnx.OfflineModelConfig
@@ -27,7 +28,9 @@ class TranscriptResult(val lines: List<TranscriptLine>, val voices: Map<Int, Flo
  * Turns decoded audio into speaker-labelled, timestamped lines:
  * diarize (who spoke when) -> merge turns -> split long turns at pauses -> Parakeet ASR.
  * [speech] picks the recognizer: English (Parakeet v2) or 25 European languages (v3), both NeMo
- * transducers that sherpa-onnx loads the same way, or Chinese, Japanese and Korean (SenseVoice Small).
+ * transducers that sherpa-onnx loads the same way, or Chinese, Japanese and Korean (SenseVoice Small),
+ * all run by sherpa-onnx's offline recognizer; or Hindi (Nemotron 3.5 ASR Streaming), a streaming
+ * transducer run by its online recognizer ([StreamingRecognizer]).
  *
  * Loading the models takes a few seconds and ~1 GB of native memory, so one engine is
  * created per batch of recordings and closed afterwards.
@@ -42,7 +45,10 @@ class TranscriptionEngine(context: Context, speech: Models.Set) : Closeable {
     private val threads = 4
     private val voiceAnalyzer = VoiceAnalyzer(context, threads = 2)
 
-    private val recognizer = OfflineRecognizer(
+    /** Hindi's recognizer; the other languages use [recognizer]. */
+    private val streaming = if (speech == Models.Set.HINDI) StreamingRecognizer(context, speech, threads) else null
+
+    private val recognizer = if (streaming != null) null else OfflineRecognizer(
         assetManager = null,
         config = OfflineRecognizerConfig(
             modelConfig = run {
@@ -121,18 +127,37 @@ class TranscriptionEngine(context: Context, speech: Models.Set) : Closeable {
         }
 
         val lines = ArrayList<TranscriptLine>()
-        pieces.forEachIndexed { i, (span, samples) ->
+        // The streaming recognizer decodes several pieces together; the offline one takes them one at a time. A batch
+        // runs until its longest piece is done, so pieces of similar length go together (lines are put back in order).
+        val batch = if (streaming != null) StreamingRecognizer.BATCH else 1
+        val order = if (streaming != null) pieces.sortedBy { (span, _) -> span.end - span.start } else pieces
+        var done = 0
+        var reported = 0L
+        // Also reported while a batch decodes, at most every 2 s: the worker learns there that the call was deleted.
+        val step = {
+            val now = SystemClock.elapsedRealtime()
+            if (now - reported >= 2_000) {
+                reported = now
+                onProgress(0.3f + 0.7f * done / pieces.size)
+            }
+        }
+        for (group in order.chunked(batch)) {
             if (isStopped()) throw CancellationException()
-            val from = (span.start * SR).toInt().coerceIn(0, samples.size)
-            val to = (span.end * SR).toInt().coerceIn(from, samples.size)
-            if (to - from >= MIN_PIECE_SAMPLES) {
-                val text = recognize(samples.copyOfRange(from, to))
+            val clips = group.mapNotNull { (span, samples) ->
+                val from = (span.start * SR).toInt().coerceIn(0, samples.size)
+                val to = (span.end * SR).toInt().coerceIn(from, samples.size)
+                if (to - from >= MIN_PIECE_SAMPLES) span to samples.copyOfRange(from, to) else null
+            }
+            val texts = streaming?.recognize(clips.map { it.second }, isStopped, step) ?: clips.map { recognize(it.second) }
+            clips.zip(texts) { (span, _), text ->
                 if (text.isNotBlank()) {
                     lines += TranscriptLine((span.start * 1000).toLong(), (span.end * 1000).toLong(), span.speaker, text)
                 }
             }
-            onProgress(0.3f + 0.7f * (i + 1) / pieces.size)
+            done += group.size
+            onProgress(0.3f + 0.7f * done / pieces.size)
         }
+        lines.sortBy { it.startMs }
         return TranscriptResult(lines, voices)
     }
 
@@ -196,6 +221,7 @@ class TranscriptionEngine(context: Context, speech: Models.Set) : Closeable {
     }
 
     private fun recognize(samples: FloatArray): String {
+        val recognizer = checkNotNull(recognizer)
         val stream = recognizer.createStream()
         try {
             stream.acceptWaveform(samples, MODEL_SAMPLE_RATE)
@@ -248,7 +274,8 @@ class TranscriptionEngine(context: Context, speech: Models.Set) : Closeable {
     }
 
     override fun close() {
-        recognizer.release()
+        recognizer?.release()
+        streaming?.close()
         diarizer.release()
         voiceAnalyzer.close()
     }

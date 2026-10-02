@@ -29,6 +29,8 @@ object Models {
     private const val SENSE_VOICE = "$HF/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main"
     /** Models Longhand hosts itself, as assets of a GitHub release. */
     private const val LONGHAND = "https://github.com/christiantwu/longhand/releases/download/models-1"
+    /** The Hindi model's files in that release, each name followed by "-encoder.int8.onnx" and so on. */
+    private const val NEMOTRON = "$LONGHAND/nemotron-3.5-asr-streaming-0.6b-1120ms"
 
     /** Speaker separation and pause detection, the same whichever language is transcribed. */
     private val SPEAKER_MODELS = listOf(
@@ -90,6 +92,25 @@ object Models {
                     "f449eb28dc567533d7fa59be34e2abca8784f771850c78a47fb731a31429a1dc"),
             ) + SPEAKER_MODELS,
             recognizerDir = "sensevoice",
+        ),
+
+        /**
+         * Hindi and English, detected per turn, including calls that mix them: NVIDIA Nemotron 3.5 ASR Streaming 0.6B, in
+         * sherpa-onnx's int8 export with 1120 ms chunks, unmodified. sherpa-onnx publishes it only inside one archive, so
+         * Longhand hosts the four files. A streaming transducer, run by sherpa-onnx's online recognizer ([StreamingRecognizer]).
+         */
+        HINDI(
+            listOf(
+                ModelFile("nemotron/encoder.int8.onnx", "$NEMOTRON-encoder.int8.onnx", 657_601_521,
+                    "2fff2166acaa535bd969fb223c1f0783d71029f143cb298bc54c2afe85abf772"),
+                ModelFile("nemotron/decoder.int8.onnx", "$NEMOTRON-decoder.int8.onnx", 14_978_075,
+                    "19f9c98fc6d0a2c33a65a43b36fdb2e914c26c0aa9764be3aebc502a1e982fb0"),
+                ModelFile("nemotron/joiner.int8.onnx", "$NEMOTRON-joiner.int8.onnx", 9_504_438,
+                    "4101c7c679a0bc30483794b27a059e34e79232aa2068d78d51231a22c8b0d7ce"),
+                ModelFile("nemotron/tokens.txt", "$NEMOTRON-tokens.txt", 131_440,
+                    "729cc103155bafa785f9cd45746cd41cabe97eab7182fc04d594129587958f8a"),
+            ) + SPEAKER_MODELS,
+            recognizerDir = "nemotron",
         ),
 
         /** Qwen 3.5 4B (Apache 2.0), Q4_0: the quantization llama.cpp runs fastest on phone CPUs. */
@@ -172,7 +193,7 @@ object Models {
     }
 
     /** The transcription languages to choose from, each with the speech set it needs. */
-    enum class Language(val set: Set) { ENGLISH(Set.SPEECH), EUROPEAN(Set.MULTILINGUAL), CJK(Set.CJK) }
+    enum class Language(val set: Set) { ENGLISH(Set.SPEECH), EUROPEAN(Set.MULTILINGUAL), CJK(Set.CJK), HINDI(Set.HINDI) }
 
     // A getter: computed while Models initializes, it would read Language half-built when Language's
     // own initialization is what started it (Language → Set → SPEAKER_MODELS → Models).

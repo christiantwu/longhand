@@ -50,4 +50,38 @@ class SummaryTest {
         assertTrue(fitted.any { it.contains("left out") })
         assertEquals(lines.take(3), SummaryPrompt.fit(lines.take(3), 5_000))
     }
+
+    private val hindi = listOf(
+        "[00:00] Ramesh Sharma: हेलो, नमस्ते भैया, रमेश बोल रहा हूँ।",
+        "[00:03] You: हाँ रमेश जी नमस्ते, मैं किचन के काम के बारे में कॉल कर रहा था।",
+        "[00:11] Ramesh Sharma: जी जी, तो कैसा लगा? टोटल ढाई लाख का बन रहा है।",
+        "[00:18] You: थोड़ा ज़्यादा लग रहा है, चिमनी हटा दें तो कितना कम होगा?",
+    )
+
+    private val mixed = listOf(
+        "[00:00] Ramesh Sharma: Hello, नमस्ते भैया, रमेश बोल रहा हूँ।",
+        "[00:03] You: हाँ रमेश जी नमस्ते, मैं kitchen के काम के बारे में call कर रहा था।",
+        "[00:11] Ramesh Sharma: जी जी, तो कैसा लगा? Total ढाई लाख का बन रहा है।",
+        "[00:18] You: थोड़ा ज़्यादा लग रहा है, chimney हटा दें तो कितना कम होगा?",
+    )
+
+    @Test fun englishKeepsItsBudget() {
+        assertEquals(22_000, SummaryPrompt.charBudget(listOf("[00:00] You: Hi, it's about the roof quote.", "[00:04] Jordan: Sure.")))
+        assertEquals(22_000, SummaryPrompt.charBudget(emptyList()))
+    }
+
+    @Test fun devanagariGetsFewerCharacters() {
+        // Qwen's tokenizer takes about 2 characters of a Hindi transcript a token, against 3.5 of English, so the same
+        // tokens hold about 12,500 characters (13,000 or so here, with more of the line in Latin letters).
+        val h = SummaryPrompt.charBudget(hindi)
+        assertTrue("$h", h in 12_000..14_000)
+        // Hindi with English words in Latin letters falls in between.
+        val m = SummaryPrompt.charBudget(mixed)
+        assertTrue("$m", m in h + 1 until 16_000)
+        // A long Hindi call is cut to that budget at the first try.
+        val long = (0 until 400).map { hindi[it % hindi.size] }
+        val fitted = SummaryPrompt.fit(long, SummaryPrompt.charBudget(long))
+        assertTrue(fitted.sumOf { it.length + 1 } <= h + 60)
+        assertEquals(long.last(), fitted.last())
+    }
 }

@@ -29,7 +29,7 @@ class ModelDownloadWorker(context: Context, params: WorkerParameters) : Coroutin
     private val set = Models.Set.valueOf(inputData.getString(SET) ?: Models.Set.SPEECH.name)
 
     // A job replaced by "Use mobile data" can still be finishing its last write when the new one
-    // starts, so each set downloads under a lock and two workers never write the same file. The two
+    // starts, so each set downloads under a lock and two workers never write the same file. The
     // speech sets share the speaker models, so they share a lock too.
     override suspend fun doWork(): Result = (if (set == Models.Set.SUMMARY) summaryLock else speechLock).withLock { downloadSet() }
 
@@ -115,6 +115,7 @@ class ModelDownloadWorker(context: Context, params: WorkerParameters) : Coroutin
                 Models.Set.SUMMARY -> "Downloading the summary model"
                 Models.Set.MULTILINGUAL -> if (update) "Updating the European languages model" else "Downloading the European languages model"
                 Models.Set.CJK -> "Downloading the Chinese, Japanese and Korean model"
+                Models.Set.HINDI -> "Downloading the Hindi model"
                 else -> "Downloading transcription models"
             },
             "${(bytes - start) / 1_000_000} / ${missing / 1_000_000} MB", p,

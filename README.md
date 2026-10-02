@@ -32,7 +32,8 @@ and no server, and nothing is uploaded.
 - **Plays any line.** Tap a line to hear that moment of the recording.
 - **Search and share.** Search by name, topic or words. Share a transcript as text or
   Markdown, or share the recording itself.
-- **Languages:** English, 25 European languages, or Chinese, Japanese and Korean.
+- **Languages:** English, 25 European languages, Chinese, Japanese and Korean, or Hindi (with
+  English, including calls that mix the two).
 
 ## Privacy
 
@@ -79,7 +80,10 @@ summaries can contain mistakes, so check anything important against the recordin
   Finnish, French, German, Greek, Hungarian, Italian, Latvian, Lithuanian, Maltese, Polish,
   Portuguese, Romanian, Russian, Slovak, Slovenian, Spanish, Swedish and Ukrainian. Or SenseVoice
   Small (int8) for Chinese (Mandarin and Cantonese), Japanese, Korean and English, also detected per
-  call. Only the chosen one is kept; while a new choice downloads, the old one keeps transcribing.
+  call. Or NVIDIA Nemotron 3.5 ASR Streaming 0.6B (int8, 1120 ms chunks) for Hindi and English,
+  detected for each turn, including calls that mix them; English words in Hindi sentences are
+  written in Devanagari. Only the chosen one is kept; while a new choice downloads, the old one
+  keeps transcribing.
 - **Who spoke when:** pyannote segmentation 3.0 + NeMo TitaNet speaker embeddings
 - **Pause detection:** Silero VAD
 - **Speech runtime:** [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) 1.13.8 (ONNX Runtime, CPU)
@@ -87,12 +91,13 @@ summaries can contain mistakes, so check anything important against the recordin
   [llama.cpp](https://github.com/ggml-org/llama.cpp) b11308, compiled into the app
 
 The models are downloaded from the setup screen: the speech models for the chosen language
-(~710 MB for English, ~730 MB for the European languages, or ~290 MB for Chinese, Japanese and
-Korean; required) and the summary model (~2.6 GB, optional). Choosing another language later in
-Settings downloads its recognizer (240–690 MB) and then deletes the old one. Downloads wait for
-Wi-Fi (an unmetered connection) unless you choose to go ahead on mobile data or a metered network.
-Summaries follow an English prompt, so a call in another language may still get its summary in
-English. After that you can turn off the app's Network permission in GrapheneOS.
+(~710 MB for English, ~730 MB for the European languages, ~290 MB for Chinese, Japanese and
+Korean, or ~730 MB for Hindi, the speaker models included; required) and the summary model
+(~2.6 GB, optional). Choosing another language later in Settings downloads its recognizer
+(240–690 MB) and then deletes the old one. Downloads wait for Wi-Fi (an unmetered connection)
+unless you choose to go ahead on mobile data or a metered network. Summaries follow an English
+prompt, so a call in another language may still get its summary in English. After that you can
+turn off the app's Network permission in GrapheneOS.
 
 **The European languages encoder is Longhand's own.** sherpa-onnx's int8 conversion of Parakeet
 v3 quantizes every convolution in the encoder, and that costs a lot of accuracy, most of all on
@@ -107,6 +112,14 @@ Phone app's default recordings; no language got worse. Phones that downloaded th
 languages with an earlier version keep transcribing with the old encoder while the new one
 (~670 MB) downloads over Wi-Fi, and the old one is deleted once the new one is in and checked. If
 you turned off the Network permission, turn it back on for the update.
+
+**The Hindi model comes from Longhand's release too, unmodified.** sherpa-onnx publishes its int8
+conversion of Nemotron 3.5 ASR Streaming only inside one archive, so Longhand hosts the encoder,
+decoder, joiner and tokens from it, byte for byte, on the same
+[GitHub release](https://github.com/christiantwu/longhand/releases/tag/models-1). On FLEURS Hindi its
+word error rate is 13.6% on wideband audio and 17.9% on audio coded like the Phone app's default
+recordings, and it recognises about 85% of the English words in Hindi-English speech. In desktop
+tests of the model, recognition took about 1.8 times as long as the European languages model.
 
 ## How it works
 
@@ -142,13 +155,26 @@ you turned off the Network permission, turn it back on for the update.
          Speakers are numbered in the order they first speak.
       3. Merge each person's consecutive speech into one turn.
       4. Cut turns longer than 25 s in the middle of pauses, keeping all the audio.
-      5. Recognise the text.
+      5. Recognise the text. Parakeet and SenseVoice run in sherpa-onnx's offline recognizer, one
+         piece at a time. Hindi's Nemotron is a streaming model, run in its online recognizer
+         (`StreamingRecognizer`): each piece goes in whole, after 0.3 s of silence (without it the
+         first word is often lost) and with 1.5 s of silence after it to flush the last chunk
+         through, and is decoded to the end. Pieces of similar length are
+         decoded six at a time (in desktop tests of the model, about 1.8 times Parakeet v3's time
+         instead of 2.5 one by one). sherpa-onnx's
+         Kotlin API leaves out that batched decoding, so `libonline-batch.so`
+         (`app/src/main/cpp/online_batch.c`) calls it in sherpa-onnx's native library. The model
+         detects the language of each piece; a piece it writes in a script other than Devanagari or
+         Latin (some short ones come out in Cyrillic) is decoded again as Hindi.
 
       Each speaker's voice fingerprint is stored, made from speech nobody talks over. If a
       stereo recording has each person on
       their own channel, the channel is used as the speaker instead of diarization.
    2. **Summarize** each new transcript (`Summarizer`). The model writes a topic, a summary and
-      follow-ups. A GBNF grammar forces the exact JSON shape.
+      follow-ups. A GBNF grammar forces the exact JSON shape. A long call's middle is left out to
+      fit the model's context. How much fits depends on the script: Qwen's tokenizer takes about
+      3.5 characters of English a token but only ~2 of a Hindi transcript, so Devanagari counts
+      for more.
 3. **Recognising "You":** tap a speaker's name in a transcript and choose **Me**. That voice
    is averaged into `voiceprint-2.bin`, and `VoiceMatchWorker` then labels you in every other
    transcript made by this version, and in older ones once they're redone (cosine similarity
@@ -277,7 +303,9 @@ The local `models/` directory mirrors the layout in `engine/Models.kt`:
   `parakeet-v3/{decoder,joiner}.int8.onnx`
   and `parakeet-v3/tokens.txt` (then choose "25 European languages" under Settings → Transcription
   language), or `sensevoice/model.int8.onnx` and `sensevoice/tokens.txt` (then choose "Chinese,
-  Japanese and Korean")
+  Japanese and Korean"), or `nemotron/{encoder,decoder,joiner}.int8.onnx` and `nemotron/tokens.txt`
+  (the files of sherpa-onnx's `sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-1120ms-int8-2026-06-11`
+  archive; then choose "Hindi")
 - `segmentation.onnx`, `embedding.onnx` and `silero_vad.onnx`
 - `llm/qwen3.5-4b-q4_0.gguf` for summaries
 
@@ -301,6 +329,19 @@ With those versions the output is bit-identical to the hosted file, and the scri
 matches the size and hash in `engine/Models.kt`. The model is NVIDIA's, under CC-BY-4.0, so the
 notes of the release that hosts the file must credit NVIDIA, link the licence and the original model,
 and say the encoder was re-quantized by Longhand.
+
+### Hosting the Hindi model
+
+The four Hindi files in the
+[models-1](https://github.com/christiantwu/longhand/releases/tag/models-1) release are the files of
+sherpa-onnx's `sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-1120ms-int8-2026-06-11.tar.bz2` (in its
+[asr-models](https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models) release, SHA-256
+`adbdd5e9fef87300c37cebfcfc4f1ebe56845c860c8a760af0a1dd65ce9beed3`), unchanged, renamed
+`nemotron-3.5-asr-streaming-0.6b-1120ms-{encoder.int8.onnx,decoder.int8.onnx,joiner.int8.onnx,tokens.txt}`.
+Their sizes and hashes are in `engine/Models.kt`. The model is NVIDIA's, under OpenMDW-1.1, which asks
+that a copy of the licence and the notices of origin go with any copy, so the release must also carry
+`OpenMDW-1.1.txt` and say that the files are sherpa-onnx's conversion of
+[nvidia/nemotron-3.5-asr-streaming-0.6b](https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b).
 
 ## Debugging
 

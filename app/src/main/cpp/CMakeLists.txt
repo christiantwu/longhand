@@ -34,3 +34,7 @@ FetchContent_MakeAvailable(llama_cpp)
 
 add_library(llm SHARED llm.cpp)
 target_link_libraries(llm PRIVATE llama log)
+
+# Batched decoding for sherpa-onnx's streaming recognizer, which its Kotlin API leaves out.
+add_library(online-batch SHARED online_batch.c)
+target_link_libraries(online-batch PRIVATE dl)

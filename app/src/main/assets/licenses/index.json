@@ -199,6 +199,15 @@
   },
   {
     "group": "models",
+    "name": "Nemotron 3.5 ASR Streaming 0.6B",
+    "version": "int8, 1120 ms chunks",
+    "license": "OpenMDW-1.1",
+    "copyright": "NVIDIA. The files are the sherpa-onnx project's int8 ONNX conversion of NVIDIA's model, unmodified (sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-1120ms-int8-2026-06-11 in sherpa-onnx's asr-models release). Downloaded when Hindi is chosen, from Longhand's GitHub releases (github.com/christiantwu/longhand/releases/tag/models-1), since sherpa-onnx publishes them only inside an archive. Licensed under the OpenMDW License Agreement 1.1, provided as is, without warranties.",
+    "source": "https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b",
+    "file": "OpenMDW-1.1.txt"
+  },
+  {
+    "group": "models",
     "name": "pyannote segmentation 3.0",
     "version": "",
     "license": "MIT",

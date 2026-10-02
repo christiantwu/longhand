@@ -23,8 +23,9 @@ class Summarizer(modelPath: String, threads: Int = 4) : Closeable {
     fun summarize(header: String, lines: List<String>): CallSummary? {
         cancelled = false
         nativeReset(handle)
-        // Characters per token is roughly 3.5 for English; retry with less if it still doesn't fit.
-        var budget = TRANSCRIPT_CHAR_BUDGET
+        // A budget for the transcript's script mix; retry with less if it still doesn't fit.
+        // Priced by the script of the lines that will actually be kept (the start and end of a long call).
+        var budget = SummaryPrompt.charBudget(lines).let { minOf(it, SummaryPrompt.charBudget(SummaryPrompt.fit(lines, it))) }
         repeat(3) {
             if (cancelled) return null
             val prompt = SummaryPrompt.build(header, lines, budget)
@@ -46,7 +47,6 @@ class Summarizer(modelPath: String, threads: Int = 4) : Closeable {
     companion object {
         const val CONTEXT_TOKENS = 8192
         const val MAX_REPLY_TOKENS = 320
-        private const val TRANSCRIPT_CHAR_BUDGET = 22_000
 
         init {
             System.loadLibrary("llm")
@@ -110,6 +110,28 @@ ws ::= | " " | "\n" [ \t]{0,20}
         }
         return head + "[... part of the call left out ...]" + tail.asReversed()
     }
+
+    /**
+     * How many characters of [lines] to start with: as many as fill the transcript's share of the context. Qwen's
+     * tokenizer takes about 3.5 characters of English a token, but splits Devanagari much finer: a Hindi transcript,
+     * with its times, names and spaces, comes to about 2.0 characters a token, and one mixing Hindi and English 2.3.
+     * Each character is counted at its own script's rate, so a Hindi call fits at the first try and keeps all it can.
+     */
+    fun charBudget(lines: List<String>): Int {
+        val chars = lines.sumOf { it.length + 1 }
+        if (chars == 0) return ENGLISH_CHAR_BUDGET
+        val devanagari = lines.sumOf { line -> line.count(Scripts::isDevanagari) }
+        val share = devanagari.toDouble() / chars
+        val tokensPerChar = (1 - share) / ENGLISH_CHARS_PER_TOKEN + share * DEVANAGARI_TOKENS_PER_CHAR
+        return (ENGLISH_CHAR_BUDGET / ENGLISH_CHARS_PER_TOKEN / tokensPerChar).toInt()
+    }
+
+    /** The transcript's share of the context for an English call, which [charBudget] keeps to in tokens. */
+    private const val ENGLISH_CHAR_BUDGET = 22_000
+    private const val ENGLISH_CHARS_PER_TOKEN = 3.5
+
+    /** A Devanagari character's cost in tokens, measured with Qwen 3.5's tokenizer on sample Hindi calls (~1.6 characters a token). */
+    private const val DEVANAGARI_TOKENS_PER_CHAR = 0.64
 }
 
 /**

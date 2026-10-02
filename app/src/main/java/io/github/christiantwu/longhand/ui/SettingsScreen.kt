@@ -201,7 +201,11 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit, onLicences: () -> Unit)
 
             Section("Transcription language") {
                 LanguageChoice(s.language, vm)
-                val model = if (s.language == Models.Language.CJK) "SenseVoice Small" else "Parakeet TDT 0.6B"
+                val model = when (s.language) {
+                    Models.Language.CJK -> "SenseVoice Small"
+                    Models.Language.HINDI -> "Nemotron 3.5 ASR Streaming 0.6B"
+                    else -> "Parakeet TDT 0.6B"
+                }
                 Text("Calls are transcribed on the phone, by $model. You can turn off this app's Network permission " +
                     "once the models you want are downloaded.",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,

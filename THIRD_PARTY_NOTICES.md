@@ -91,6 +91,12 @@ Z-algorithm is under The Unlicense. All of these are in
 contains the LLVM C++ runtime (Apache-2.0 WITH LLVM-exception) and the C runtime startup objects
 (BSD-2-Clause) from Android NDK r30.
 
+### `libonline-batch.so`: batched decoding for the Hindi model
+
+Built by this repository from `app/src/main/cpp/online_batch.c` (GPL-3.0-or-later). It calls the batched
+decoding in `libsherpa-onnx-jni.so` that sherpa-onnx's Kotlin API leaves out, and contains no third-party code
+apart from the toolchain code below.
+
 ### Toolchain code in every native library
 
 Each native library carries its own static copy of the Android NDK's C runtime startup objects
@@ -154,6 +160,7 @@ their own licences:
 | NVIDIA Parakeet TDT 0.6B v2 (int8 ONNX conversion by sherpa-onnx) | CC-BY-4.0 | [nvidia/parakeet-tdt-0.6b-v2](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2) |
 | NVIDIA Parakeet TDT 0.6B v3 (ONNX conversion by sherpa-onnx, encoder re-quantized by Longhand, see below; only with "25 European languages") | CC-BY-4.0 | [nvidia/parakeet-tdt-0.6b-v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) |
 | Alibaba FunAudioLLM SenseVoice Small (int8 ONNX conversion by sherpa-onnx; only with "Chinese, Japanese and Korean") | [FunASR Model Open Source License Agreement 1.1](https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE) | [FunAudioLLM/SenseVoiceSmall](https://huggingface.co/FunAudioLLM/SenseVoiceSmall) |
+| NVIDIA Nemotron 3.5 ASR Streaming 0.6B (int8 ONNX conversion by sherpa-onnx with 1120 ms chunks, unmodified, hosted by Longhand, see below; only with "Hindi") | [OpenMDW-1.1](app/src/main/assets/licenses/OpenMDW-1.1.txt) | [nvidia/nemotron-3.5-asr-streaming-0.6b](https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b) |
 | pyannote segmentation 3.0 | MIT | [pyannote/segmentation-3.0](https://huggingface.co/pyannote/segmentation-3.0) |
 | NVIDIA NeMo TitaNet-S | Apache-2.0 (NeMo toolkit licence) | [NGC titanet_small](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/nemo/models/titanet_small) |
 | Silero VAD | MIT | [snakers4/silero-vad](https://github.com/snakers4/silero-vad) |
@@ -173,3 +180,14 @@ tokens are sherpa-onnx's int8 conversion, unmodified, downloaded from
 The model is licensed by NVIDIA under the
 [Creative Commons Attribution 4.0 International licence](https://creativecommons.org/licenses/by/4.0/),
 and is provided as-is, without warranties.
+
+**Nemotron 3.5 ASR Streaming 0.6B is hosted by Longhand, unmodified.** sherpa-onnx publishes its int8 ONNX
+conversion of NVIDIA's model only inside one archive,
+`sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-1120ms-int8-2026-06-11.tar.bz2` in its
+[asr-models](https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models) release (SHA-256
+`adbdd5e9fef87300c37cebfcfc4f1ebe56845c860c8a760af0a1dd65ce9beed3`). Longhand downloads the archive's encoder,
+decoder, joiner and tokens, byte for byte, from its own GitHub release
+[models-1](https://github.com/christiantwu/longhand/releases/tag/models-1). The model is licensed by NVIDIA under
+the [OpenMDW License Agreement 1.1](app/src/main/assets/licenses/OpenMDW-1.1.txt), which asks that a copy of the
+licence and the model's notices of origin go with any copy of it, and is provided as-is, without warranties. The app
+shows the licence under **Settings → About → Open-source licences**.

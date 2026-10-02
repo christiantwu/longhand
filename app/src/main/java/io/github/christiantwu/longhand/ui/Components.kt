@@ -323,9 +323,9 @@ const val EUROPEAN_LANGUAGES = "Bulgarian, Croatian, Czech, Danish, Dutch, Engli
     "Slovenian, Spanish, Swedish and Ukrainian"
 
 /**
- * The transcription language as a group of radio rows: English only, 25 European languages, or
- * Chinese, Japanese and Korean, the last two detected per call. The chosen one shows its download;
- * until it's in, the installed one keeps transcribing.
+ * The transcription language as a group of radio rows: English only, 25 European languages,
+ * Chinese, Japanese and Korean, or Hindi, the last three detected per call. The chosen one shows its
+ * download; until it's in, the installed one keeps transcribing.
  */
 @Composable
 fun LanguageChoice(language: Models.Language, vm: AppViewModel, modifier: Modifier = Modifier) {
@@ -334,6 +334,7 @@ fun LanguageChoice(language: Models.Language, vm: AppViewModel, modifier: Modifi
         Models.Language.ENGLISH to vm.speechModels.collectAsStateWithLifecycle().value,
         Models.Language.EUROPEAN to vm.multilingualModels.collectAsStateWithLifecycle().value,
         Models.Language.CJK to vm.cjkModels.collectAsStateWithLifecycle().value,
+        Models.Language.HINDI to vm.hindiModels.collectAsStateWithLifecycle().value,
     )
     val chosenReady = states.getValue(language).installed
     val options = Models.Language.entries
@@ -349,6 +350,9 @@ fun LanguageChoice(language: Models.Language, vm: AppViewModel, modifier: Modifi
                 Models.Language.CJK -> "Chinese, Japanese and Korean" to
                     "Mandarin and Cantonese Chinese, Japanese, Korean and English, detected for each call. " +
                     "Less accurate in English."
+                Models.Language.HINDI -> "Hindi" to
+                    "Hindi and English, detected for each call, including calls that mix them. " +
+                    "English words in Hindi sentences are written in Devanagari."
             }
             val detail = when {
                 selected && state.installed -> about

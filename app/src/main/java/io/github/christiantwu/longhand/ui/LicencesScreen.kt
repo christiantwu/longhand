@@ -39,7 +39,8 @@ import org.json.JSONArray
 object Licences {
     /**
      * [group] is "app", "built-in" or "models". [file] names the licence text in assets/licenses; it's blank
-     * for the downloaded models, whose licences live with the models.
+     * for most downloaded models, whose licences live with the models. A model whose licence asks for a copy
+     * to go with it (OpenMDW, for the Hindi model) has one.
      */
     data class Entry(
         val name: String, val version: String, val license: String, val copyright: String,

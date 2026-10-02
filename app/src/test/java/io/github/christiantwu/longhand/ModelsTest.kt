@@ -2,6 +2,7 @@ package io.github.christiantwu.longhand
 
 import io.github.christiantwu.longhand.engine.Models
 import io.github.christiantwu.longhand.engine.Models.Set.CJK
+import io.github.christiantwu.longhand.engine.Models.Set.HINDI
 import io.github.christiantwu.longhand.engine.Models.Set.MULTILINGUAL
 import io.github.christiantwu.longhand.engine.Models.Set.SPEECH
 import io.github.christiantwu.longhand.ui.ModelState
@@ -44,6 +45,41 @@ class ModelsTest {
         assertEquals("parakeet-v3/tokens.txt", MULTILINGUAL.part("tokens").path)
         assertEquals("parakeet/encoder.int8.onnx", SPEECH.part("encoder").path)
         assertEquals("sensevoice/model.int8.onnx", CJK.part("model").path)
+        assertEquals("nemotron/encoder.int8.onnx", HINDI.part("encoder").path)
+        assertEquals("nemotron/joiner.int8.onnx", HINDI.part("joiner").path)
+        assertEquals("nemotron/tokens.txt", HINDI.part("tokens").path)
+    }
+
+    @Test fun hindiIsNemotronFromLonghandsRelease() {
+        assertEquals(HINDI, Models.Language.HINDI.set)
+        assertEquals(listOf(SPEECH, MULTILINGUAL, CJK, HINDI), Models.speechSets)
+        val own = HINDI.files.filter { it.path.startsWith("nemotron/") }
+        assertEquals(4, own.size)
+        for (f in own) {
+            assertTrue(f.url, f.url.startsWith("https://github.com/christiantwu/longhand/releases/download/models-1/nemotron-3.5-asr-streaming-0.6b-1120ms-"))
+            assertTrue(f.url, f.url.endsWith("-" + f.path.removePrefix("nemotron/")))
+            assertEquals(64, f.sha256.length)
+        }
+        assertEquals(657_601_521L, HINDI.part("encoder").sizeBytes)
+        // About 730 MB with the speaker models, which every language shares.
+        for (path in listOf("segmentation.onnx", "embedding.onnx", "silero_vad.onnx")) assertTrue(path, HINDI.files.any { it.path == path })
+        assertEquals(729, (HINDI.totalBytes / 1_000_000).toInt())
+    }
+
+    @Test fun hindiTakesOverFromTheInstalledLanguage() {
+        val disk = Disk().add(SPEECH)
+        // English keeps transcribing while Hindi downloads, and only Hindi's own files are still to come.
+        assertEquals(SPEECH, Models.recognizer(HINDI, disk))
+        assertFalse(Models.isInstalled(HINDI, disk))
+        assertEquals(HINDI.files.filter { it.path.startsWith("nemotron/") }.sumOf { it.sizeBytes }, Models.missingBytes(HINDI, disk))
+        disk.add(HINDI)
+        assertEquals(HINDI, Models.recognizer(HINDI, disk))
+        assertFalse(Models.needsUpdate(HINDI, disk))
+        // Then the other recognizers go, and the speaker models stay.
+        val others = Models.recognizerPaths(Models.speechSets - HINDI)
+        assertTrue("parakeet/encoder.int8.onnx" in others)
+        assertTrue(HINDI.files.none { it.path in others })
+        assertEquals(HINDI.files.map { it.path }.filter { it.startsWith("nemotron/") }, Models.recognizerPaths(listOf(HINDI)))
     }
 
     @Test fun nothingDownloaded() {
@@ -122,6 +158,7 @@ class ModelsTest {
         // The speaker models are shared, so another language needs only its recognizer.
         assertEquals(MULTILINGUAL.totalBytes - speaker, Models.missingBytes(MULTILINGUAL, english))
         assertEquals(CJK.totalBytes - speaker, Models.missingBytes(CJK, english))
+        assertEquals(HINDI.totalBytes - speaker, Models.missingBytes(HINDI, english))
         assertEquals(0L, Models.missingBytes(SPEECH, english))
         assertFalse(Models.needsUpdate(SPEECH, english))
     }
