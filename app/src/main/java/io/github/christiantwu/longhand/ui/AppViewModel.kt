@@ -43,6 +43,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 data class ModelState(
+    /** Usable, perhaps on an earlier file while an improved one downloads ([update]). */
     val installed: Boolean,
     /** Queued or running. */
     val downloading: Boolean = false,
@@ -52,10 +53,20 @@ data class ModelState(
     val waiting: String? = null,
     /** A network the user can choose to download over instead, while the download waits. */
     val offer: Work.DownloadNetwork? = null,
+    /** Installed, with an improved file still to download; the download fields are about that file. */
+    val update: Boolean = false,
 ) {
     val downloadText: String get() = waiting ?: "Downloading… ${(progress * 100).toInt()}%"
     /** The progress bar, shown only while bytes are actually arriving. */
     val runningProgress: Float? get() = if (downloading && waiting == null) progress else null
+    /** A line under an installed set's usual text while it's updated; null when there's no update. */
+    val updateText: String? get() = when {
+        !update -> null
+        error != null -> "Update failed: $error"
+        !downloading -> "An improved version is ready to download."
+        waiting != null -> "Updating to an improved version. $waiting"
+        else -> "Updating to an improved version… ${(progress * 100).toInt()}%"
+    }
 }
 
 /** Device state the setup and settings screens show; refreshed whenever the app resumes. */
@@ -126,29 +137,33 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         workManager.getWorkInfosForUniqueWorkFlow(Work.downloadName(set)), refreshTick,
     ) { infos, _ ->
         val info = infos.firstOrNull()
+        val installed = Models.isInstalled(getApplication(), set)
+        // An installed set may still work on an earlier file, while the improved one that replaces it downloads.
+        val base = ModelState(installed, update = installed && Models.needsUpdate(getApplication(), set))
+        val queued = base.copy(downloading = true)
         when {
-            Models.isInstalled(getApplication(), set) -> ModelState(installed = true)
+            installed && !base.update -> base
             info?.state == WorkInfo.State.RUNNING ->
-                ModelState(false, downloading = true, progress = info.progress.getFloat(ModelDownloadWorker.PROGRESS, 0f))
+                queued.copy(progress = info.progress.getFloat(ModelDownloadWorker.PROGRESS, 0f))
             // Downloads wait for Wi-Fi unless the user chose mobile data; a retry also waits a little.
             info?.state == WorkInfo.State.ENQUEUED -> when {
-                !network().connected -> ModelState(false, downloading = true, waiting = "Waiting for a connection…")
+                !network().connected -> queued.copy(waiting = "Waiting for a connection…")
                 info.constraints.requiredNetworkType == NetworkType.UNMETERED && !network().unmetered ->
                     if (network().wifi) {
-                        ModelState(false, downloading = true, offer = Work.DownloadNetwork.WIFI,
+                        queued.copy(offer = Work.DownloadNetwork.WIFI,
                             waiting = "This Wi-Fi is metered. Waiting for an unmetered connection…")
                     } else {
-                        ModelState(false, downloading = true, offer = Work.DownloadNetwork.ANY, waiting = "Waiting for Wi-Fi…")
+                        queued.copy(offer = Work.DownloadNetwork.ANY, waiting = "Waiting for Wi-Fi…")
                     }
                 // "Download anyway" on a metered Wi-Fi keeps to Wi-Fi when that drops.
                 info.constraints.requiredNetworkRequest?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true && !network().wifi ->
-                    ModelState(false, downloading = true, offer = Work.DownloadNetwork.ANY, waiting = "Waiting for Wi-Fi…")
-                info.runAttemptCount > 0 -> ModelState(false, downloading = true, waiting = "Interrupted; trying again shortly…")
-                else -> ModelState(false, downloading = true, waiting = "Starting…")
+                    queued.copy(offer = Work.DownloadNetwork.ANY, waiting = "Waiting for Wi-Fi…")
+                info.runAttemptCount > 0 -> queued.copy(waiting = "Interrupted; trying again shortly…")
+                else -> queued.copy(waiting = "Starting…")
             }
             info?.state == WorkInfo.State.FAILED ->
-                ModelState(false, error = info.outputData.getString(ModelDownloadWorker.ERROR) ?: "Download failed")
-            else -> ModelState(false)
+                base.copy(error = info.outputData.getString(ModelDownloadWorker.ERROR) ?: "Download failed")
+            else -> base
         }
     }.stateIn(viewModelScope, SharingStarted.Eagerly, ModelState(Models.isInstalled(getApplication(), set)))
 
@@ -222,18 +237,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /**
      * A language not downloaded yet is fetched (over Wi-Fi, like the others) while the installed one
      * keeps working; once it's in, the old one is deleted. A language that is still installed takes
-     * over at once. Either way, any download of a language no longer chosen stops and is deleted.
+     * over at once, and fetches any improved file it lacks. Either way, any download of a language no
+     * longer chosen stops and is deleted.
      */
     fun setLanguage(language: Models.Language) = viewModelScope.launch(Dispatchers.IO) { languageLock.withLock {
         settingsStore.setLanguage(language)
         val app = getApplication<Application>()
         val chosen = language.set
-        // Keep an installed language only to transcribe with until the chosen one arrives.
+        // Keep an installed language only to transcribe with until the chosen one arrives; it needs no update for that.
         val unneeded = (Models.speechSets - chosen)
             .filter { Models.isInstalled(app, chosen) || !Models.isInstalled(app, it) }
-        for (set in unneeded) workManager.cancelUniqueWork(Work.downloadName(set)).result.get()
+        for (set in Models.speechSets - chosen) workManager.cancelUniqueWork(Work.downloadName(set)).result.get()
         Models.recognizerLock.withLock { Models.removeRecognizers(app, unneeded) }
-        if (!Models.isInstalled(app, chosen)) Work.downloadModels(app, chosen)
+        if (Models.missingBytes(app, chosen) > 0) Work.downloadModels(app, chosen)
         refreshTick.value++
     } }
 

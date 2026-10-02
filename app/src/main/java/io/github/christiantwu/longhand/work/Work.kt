@@ -26,6 +26,7 @@ import io.github.christiantwu.longhand.R
 import io.github.christiantwu.longhand.data.Settings
 import io.github.christiantwu.longhand.engine.Models
 import io.github.christiantwu.longhand.ui.MainActivity
+import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.TimeUnit
 
 object Work {
@@ -141,10 +142,26 @@ object Work {
             downloadName(set),
             if (network == DownloadNetwork.UNMETERED) ExistingWorkPolicy.KEEP else ExistingWorkPolicy.REPLACE,
             OneTimeWorkRequestBuilder<ModelDownloadWorker>()
-                .setInputData(workDataOf(ModelDownloadWorker.SET to set.name))
+                .setInputData(workDataOf(ModelDownloadWorker.SET to set.name, ModelDownloadWorker.MISSING to Models.missingBytes(context, set)))
                 .setConstraints(constraints)
                 .build(),
         )
+    }
+
+    /**
+     * Brings the chosen language's models up to date; the folder check runs this every 15 minutes and when the
+     * app opens. An improved file that replaces an earlier one downloads like any model, over Wi-Fi, while the
+     * earlier one keeps transcribing, and what earlier files leave behind is deleted. A failed update keeps its
+     * error and Retry in Settings instead of starting over at every check; WorkManager forgets the failure
+     * after a day, and the next check tries again.
+     */
+    suspend fun updateModels(context: Context) {
+        Models.recognizerLock.withLock { Models.speechSets.forEach { Models.deleteObsolete(context, it) } }
+        val chosen = Settings(context).current().language.set
+        if (!Models.needsUpdate(context, chosen)) return
+        val failed = WorkManager.getInstance(context).getWorkInfosForUniqueWork(downloadName(chosen)).get()
+            .any { it.state == WorkInfo.State.FAILED }
+        if (!failed) downloadModels(context, chosen)
     }
 
     /** Re-labels "You" across transcripts after the user confirms their voice. */

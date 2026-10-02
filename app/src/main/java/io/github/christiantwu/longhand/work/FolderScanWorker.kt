@@ -24,13 +24,18 @@ class FolderScanWorker(context: Context, params: WorkerParameters) : CoroutineWo
     }
 }
 
-/** Looks for new recordings in the watched folder, names their callers, and queues them for transcription. */
+/**
+ * Looks for new recordings in the watched folder, names their callers, and queues them for transcription.
+ * Also keeps the models up to date ([Work.updateModels]).
+ */
 object FolderScan {
 
     suspend fun run(context: Context) {
         val settings = Settings(context).current()
         // Before setup is finished, the "include existing recordings" choice hasn't been made.
         if (!settings.setupDone) return
+        // First, as it doesn't need the folder: an improved model file to download, or an old one to delete.
+        Work.updateModels(context)
         val folder = settings.folderUri?.toUri() ?: return
         if (!FolderScanner.hasAccess(context, folder)) {
             Log.w(TAG, "scan: folder permission lost")

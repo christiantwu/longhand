@@ -19,7 +19,8 @@ import java.net.URL
 import java.security.MessageDigest
 
 /**
- * Downloads one set of models (speech for one language 290–720 MB, summaries ~2.6 GB).
+ * Downloads one set of models (speech for one language 290–730 MB, summaries ~2.6 GB), or what's missing
+ * of it: for an installed set, an improved file that replaces an earlier one (see [Models.ModelFile.replaces]).
  * Partial files are resumed, and every file's SHA-256 is checked before it is put in place,
  * so a broken download never reaches the engine.
  */
@@ -32,11 +33,25 @@ class ModelDownloadWorker(context: Context, params: WorkerParameters) : Coroutin
     // speech sets share the speaker models, so they share a lock too.
     override suspend fun doWork(): Result = (if (set == Models.Set.SUMMARY) summaryLock else speechLock).withLock { downloadSet() }
 
+    /** The set already works, on an earlier file that the one being downloaded replaces. */
+    private var update = false
+
+    /** Bytes of the set in place before this run; progress counts only the rest. */
+    private var start = 0L
+
     private suspend fun downloadSet(): Result {
+        // Only the chosen language's speech set is ever wanted. A download queued for another (an update
+        // check racing a language change, say) would fetch hundreds of MB to be deleted again.
+        if (set != Models.Set.SUMMARY && Settings(applicationContext).current().language.set != set) return Result.success()
+        update = Models.needsUpdate(applicationContext, set)
         var done = set.files.sumOf { f ->
             val file = Models.file(applicationContext, f.path)
             if (file.length() == f.sizeBytes) f.sizeBytes else 0L
         }
+        // What was missing when the download was asked for, so a retry or a restart doesn't move the
+        // progress backwards; a request from before this was recorded counts from now.
+        val missingAtRequest = inputData.getLong(MISSING, -1L)
+        start = if (missingAtRequest >= 0) (set.totalBytes - missingAtRequest).coerceAtMost(done) else done
         report(done)
         return try {
             for (f in set.files) {
@@ -44,6 +59,13 @@ class ModelDownloadWorker(context: Context, params: WorkerParameters) : Coroutin
                 if (target.length() == f.sizeBytes) continue
                 target.parentFile?.mkdirs()
                 val part = File(target.path + ".part")
+                // An update keeps the earlier file until this one is verified, so it needs room on top of
+                // everything installed. Without it every retry would fail at once; stop and say why.
+                val needed = f.sizeBytes - part.length().coerceAtMost(f.sizeBytes)
+                val free = Models.dir(applicationContext).usableSpace
+                if (free < needed + SPACE_MARGIN) {
+                    return Result.failure(workDataOf(ERROR to "Not enough storage: ${(needed + SPACE_MARGIN - free) / 1_000_000 + 1} MB more needed"))
+                }
                 val base = done
                 // A complete .part (the app stopped before renaming it) only needs checking.
                 if (part.length() < f.sizeBytes) download(f.url, part) { bytes -> done = base + bytes; report(done) }
@@ -60,10 +82,15 @@ class ModelDownloadWorker(context: Context, params: WorkerParameters) : Coroutin
                 // (on battery, recent ones now and the rest on the charger).
                 AppDatabase.get(applicationContext).recordings().queueMissingSummaries()
                 Work.scanNow(applicationContext)
-            } else if (Settings(applicationContext).current().language.set == set) {
-                // The language chosen in Settings is now in place: the recognizer that worked while this
-                // one downloaded has done its job, and goes to free the space.
-                Models.recognizerLock.withLock { Models.removeRecognizers(applicationContext, Models.speechSets - set) }
+            } else {
+                val chosen = Settings(applicationContext).current().language.set == set
+                Models.recognizerLock.withLock {
+                    // Every file is in place and verified, so an earlier file one of them replaces has done its job.
+                    Models.deleteObsolete(applicationContext, set)
+                    // The language chosen in Settings is now in place: the recognizer that worked while this
+                    // one downloaded has done its job, and goes to free the space.
+                    if (chosen) Models.removeRecognizers(applicationContext, Models.speechSets - set)
+                }
             }
             Result.success()
         } catch (e: Exception) {
@@ -78,17 +105,19 @@ class ModelDownloadWorker(context: Context, params: WorkerParameters) : Coroutin
         val now = System.currentTimeMillis()
         if (now - lastReport < 500 && bytes < set.totalBytes) return
         lastReport = now
-        val p = bytes.toFloat() / set.totalBytes
+        // Of what was missing, as the "About N MB" the app showed before the download.
+        val missing = set.totalBytes - start
+        val p = if (missing > 0) (bytes - start).toFloat() / missing else 1f
         setProgress(workDataOf(PROGRESS to p))
         val n = Work.progressNotification(
             applicationContext,
             when (set) {
                 Models.Set.SUMMARY -> "Downloading the summary model"
-                Models.Set.MULTILINGUAL -> "Downloading the European languages model"
+                Models.Set.MULTILINGUAL -> if (update) "Updating the European languages model" else "Downloading the European languages model"
                 Models.Set.CJK -> "Downloading the Chinese, Japanese and Korean model"
                 else -> "Downloading transcription models"
             },
-            "${bytes / 1_000_000} / ${set.totalBytes / 1_000_000} MB", p,
+            "${(bytes - start) / 1_000_000} / ${missing / 1_000_000} MB", p,
         )
         runCatching { setForeground(Work.foregroundInfo(Work.NOTIF_DOWNLOAD, n, longProcessing = false)) }
     }
@@ -145,7 +174,11 @@ class ModelDownloadWorker(context: Context, params: WorkerParameters) : Coroutin
         private val summaryLock = Mutex()
 
         const val SET = "set"
+        /** Bytes missing when the download was requested: the baseline for its progress. */
+        const val MISSING = "missing"
         const val PROGRESS = "progress"
         const val ERROR = "error"
+        /** Room left free after a download, for transcripts and everything else on the phone. */
+        private const val SPACE_MARGIN = 300_000_000L
     }
 }

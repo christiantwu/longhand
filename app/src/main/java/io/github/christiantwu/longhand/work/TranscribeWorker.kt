@@ -128,7 +128,7 @@ class TranscribeWorker(context: Context, params: WorkerParameters) : CoroutineWo
         }
         val done = ArrayList<Long>()
         var engine: TranscriptionEngine? = null
-        var engineSet: Models.Set? = null
+        var engineFiles: List<String>? = null
         try {
             while (!isStopped && !pausedForCall()) {
                 val rec = when {
@@ -137,18 +137,19 @@ class TranscribeWorker(context: Context, params: WorkerParameters) : CoroutineWo
                         !(summariesWaiting() && dao.requestedCount() > 0) -> dao.nextRedo()
                     else -> null
                 } ?: break
-                // Chosen afresh for every recording: a language that finished downloading meanwhile takes
-                // over at once, instead of the other one carrying on through a long backlog.
+                // Chosen afresh for every recording: a language, or an improved model file, that finished
+                // downloading meanwhile takes over at once, instead of the old one carrying on through a long backlog.
                 val chosen = Settings(applicationContext).current().language.set
                 val loaded = Models.recognizerLock.withLock {
                     val speech = Models.recognizer(applicationContext, chosen) ?: return@withLock false
-                    if (engine == null || speech != engineSet) {
+                    val files = Models.filesInUse(applicationContext, speech)
+                    if (engine == null || files != engineFiles) {
                         engine?.close() // never two engines in memory
                         engine = null
                         val t = SystemClock.elapsedRealtime()
                         engine = TranscriptionEngine(applicationContext, speech)
-                        engineSet = speech
-                        Log.i(TAG, "speech models ($speech) loaded in ${SystemClock.elapsedRealtime() - t} ms")
+                        engineFiles = files
+                        Log.i(TAG, "speech models ($speech, ${files.first()}) loaded in ${SystemClock.elapsedRealtime() - t} ms")
                     }
                     true
                 }

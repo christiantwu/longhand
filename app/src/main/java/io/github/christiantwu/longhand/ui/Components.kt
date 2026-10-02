@@ -250,14 +250,21 @@ fun TextAction(text: String, onClick: () -> Unit, modifier: Modifier = Modifier,
     }
 }
 
-/** The actions beside a model set: Download or Retry, or a way round the Wi-Fi wait. */
+/** The actions beside a model set: Download, Update or Retry, or a way round the Wi-Fi wait. */
 @Composable
 fun ModelAction(state: ModelState, set: Models.Set, vm: AppViewModel) {
     when {
-        state.installed -> {}
+        state.installed && !state.update -> {}
         state.offer != null ->
             TextAction(if (state.offer == Work.DownloadNetwork.WIFI) "Download anyway" else "Use mobile data", { vm.downloadModels(set, state.offer) })
-        !state.downloading -> TextAction(if (state.error != null) "Retry" else "Download", { vm.downloadModels(set) })
+        !state.downloading -> TextAction(
+            when {
+                state.error != null -> "Retry"
+                state.update -> "Update"
+                else -> "Download"
+            },
+            { vm.downloadModels(set) },
+        )
     }
 }
 
@@ -356,9 +363,14 @@ fun LanguageChoice(language: Models.Language, vm: AppViewModel, modifier: Modifi
             ) {
                 RadioButton(selected = selected, onClick = null, modifier = Modifier.padding(top = 2.dp))
                 RowText(name, detail) {
-                    if (selected) state.runningProgress?.let { ProgressLine(it, Modifier.padding(top = 10.dp, bottom = 4.dp)) }
+                    if (selected && !state.update) state.runningProgress?.let { ProgressLine(it, Modifier.padding(top = 10.dp, bottom = 4.dp)) }
+                    // The language keeps working while an improved version downloads, so that's one quiet line.
+                    if (selected) state.updateText?.let {
+                        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 4.dp))
+                    }
                     // Pull the action back by its own padding so its text lines up with the text above.
-                    if (selected && !state.installed) Row(Modifier.offset(x = (-12).dp)) { ModelAction(state, set, vm) }
+                    if (selected && (!state.installed || state.update)) Row(Modifier.offset(x = (-12).dp)) { ModelAction(state, set, vm) }
                 }
             }
         }

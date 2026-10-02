@@ -152,9 +152,24 @@ their own licences:
 | Model | Licence | Source |
 |---|---|---|
 | NVIDIA Parakeet TDT 0.6B v2 (int8 ONNX conversion by sherpa-onnx) | CC-BY-4.0 | [nvidia/parakeet-tdt-0.6b-v2](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2) |
-| NVIDIA Parakeet TDT 0.6B v3 (int8 ONNX conversion by sherpa-onnx; only with "25 European languages") | CC-BY-4.0 | [nvidia/parakeet-tdt-0.6b-v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) |
+| NVIDIA Parakeet TDT 0.6B v3 (ONNX conversion by sherpa-onnx, encoder re-quantized by Longhand, see below; only with "25 European languages") | CC-BY-4.0 | [nvidia/parakeet-tdt-0.6b-v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) |
 | Alibaba FunAudioLLM SenseVoice Small (int8 ONNX conversion by sherpa-onnx; only with "Chinese, Japanese and Korean") | [FunASR Model Open Source License Agreement 1.1](https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE) | [FunAudioLLM/SenseVoiceSmall](https://huggingface.co/FunAudioLLM/SenseVoiceSmall) |
 | pyannote segmentation 3.0 | MIT | [pyannote/segmentation-3.0](https://huggingface.co/pyannote/segmentation-3.0) |
 | NVIDIA NeMo TitaNet-S | Apache-2.0 (NeMo toolkit licence) | [NGC titanet_small](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/nemo/models/titanet_small) |
 | Silero VAD | MIT | [snakers4/silero-vad](https://github.com/snakers4/silero-vad) |
 | Qwen3.5 4B, Q4_0 GGUF by Unsloth | Apache-2.0 | [Qwen/Qwen3.5-4B](https://huggingface.co/Qwen/Qwen3.5-4B) |
+
+**Parakeet TDT 0.6B v3 is modified.** Its encoder was re-quantized to int8 by Longhand from sherpa-onnx's
+full-precision ONNX conversion of NVIDIA's model
+([csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3](https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3),
+commit `1a468a35`): the whole pre-encode (subsampling) stage, its convolutions and output projection, and the
+depthwise convolutions are kept in full precision, where
+sherpa-onnx's own int8 encoder quantizes them too. The recipe is
+[`tools/requantize_parakeet_v3.py`](tools/requantize_parakeet_v3.py). The modified encoder is downloaded
+from Longhand's GitHub release
+[models-1](https://github.com/christiantwu/longhand/releases/tag/models-1); the decoder, joiner and
+tokens are sherpa-onnx's int8 conversion, unmodified, downloaded from
+[csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8](https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8).
+The model is licensed by NVIDIA under the
+[Creative Commons Attribution 4.0 International licence](https://creativecommons.org/licenses/by/4.0/),
+and is provided as-is, without warranties.

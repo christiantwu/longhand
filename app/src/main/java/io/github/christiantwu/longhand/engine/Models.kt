@@ -11,13 +11,24 @@ import java.io.File
  */
 object Models {
 
-    data class ModelFile(val path: String, val url: String, val sizeBytes: Long, val sha256: String)
+    /**
+     * @param replaces an earlier file this one supersedes, under another path so an install of it is never taken
+     *   for this one. Until this file is downloaded, the earlier one stands in for it (see [isInstalled]).
+     */
+    data class ModelFile(
+        val path: String, val url: String, val sizeBytes: Long, val sha256: String, val replaces: Replaced? = null,
+    )
+
+    /** A file earlier versions of the app downloaded, recognised by its size. */
+    data class Replaced(val path: String, val sizeBytes: Long)
 
     private const val HF = "https://huggingface.co/csukuangfj"
     private const val GH = "https://github.com/k2-fsa/sherpa-onnx/releases/download"
     private const val PARAKEET = "$HF/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8/resolve/main"
     private const val PARAKEET_V3 = "$HF/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/main"
     private const val SENSE_VOICE = "$HF/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main"
+    /** Models Longhand hosts itself, as assets of a GitHub release. */
+    private const val LONGHAND = "https://github.com/christiantwu/longhand/releases/download/models-1"
 
     /** Speaker separation and pause detection, the same whichever language is transcribed. */
     private val SPEAKER_MODELS = listOf(
@@ -49,11 +60,17 @@ object Models {
             recognizerDir = "parakeet",
         ),
 
-        /** 25 European languages, detected per call: Parakeet TDT 0.6B v3. */
+        /**
+         * 25 European languages, detected per call: Parakeet TDT 0.6B v3. The encoder is Longhand's own int8
+         * quantization of sherpa-onnx's fp32 export (tools/requantize_parakeet_v3.py): sherpa-onnx's int8 encoder
+         * quantizes the pre-encode (subsampling) stage and the depthwise convolutions too, which costs a lot of accuracy, most on phone
+         * audio. Earlier installs have that encoder, which keeps working until this one is in place.
+         */
         MULTILINGUAL(
             listOf(
-                ModelFile("parakeet-v3/encoder.int8.onnx", "$PARAKEET_V3/encoder.int8.onnx", 652_184_281,
-                    "acfc2b4456377e15d04f0243af540b7fe7c992f8d898d751cf134c3a55fd2247"),
+                ModelFile("parakeet-v3/encoder.repaired.int8.onnx", "$LONGHAND/parakeet-tdt-0.6b-v3-encoder.int8.onnx",
+                    665_796_726, "013290f8001e0434a33bfc1f4ea2a9039107a878d894a51a212c48802b58efac",
+                    replaces = Replaced("parakeet-v3/encoder.int8.onnx", 652_184_281)),
                 ModelFile("parakeet-v3/decoder.int8.onnx", "$PARAKEET_V3/decoder.int8.onnx", 11_845_275,
                     "179e50c43d1a9de79c8a24149a2f9bac6eb5981823f2a2ed88d655b24248db4e"),
                 ModelFile("parakeet-v3/joiner.int8.onnx", "$PARAKEET_V3/joiner.int8.onnx", 6_355_277,
@@ -84,6 +101,9 @@ object Models {
         );
 
         val totalBytes: Long get() = files.sumOf { it.sizeBytes }
+
+        /** The recognizer's [kind] file: "encoder", "decoder", "joiner", "model" or "tokens". */
+        fun part(kind: String): ModelFile = files.first { it.path.startsWith("$recognizerDir/$kind.") }
     }
 
     const val SUMMARY_MODEL = "llm/qwen3.5-4b-q4_0.gguf"
@@ -92,9 +112,64 @@ object Models {
 
     fun file(context: Context, path: String) = File(dir(context), path)
 
-    /** A size check is enough here; hashes are verified when the download completes. */
-    fun isInstalled(context: Context, set: Set): Boolean =
-        set.files.all { file(context, it.path).length() == it.sizeBytes }
+    /**
+     * The file sizes in the model folder by path, 0 for a missing file: all the checks below look at. A size
+     * check is enough, since hashes are verified when a download completes and only then is a file put in place.
+     */
+    fun interface Sizes {
+        fun of(path: String): Long
+    }
+
+    private fun sizes(context: Context) = Sizes { file(context, it).length() }
+
+    private fun ModelFile.inPlace(sizes: Sizes) = sizes.of(path) == sizeBytes
+
+    /** The earlier file standing in for this one while it isn't downloaded yet, if there is one. */
+    private fun ModelFile.standIn(sizes: Sizes): Replaced? =
+        replaces?.takeIf { !inPlace(sizes) && sizes.of(it.path) == it.sizeBytes }
+
+    /** [set] can be used: each file is in place, or the earlier file it replaces still is. */
+    fun isInstalled(set: Set, sizes: Sizes): Boolean = set.files.all { it.inPlace(sizes) || it.standIn(sizes) != null }
+
+    fun isInstalled(context: Context, set: Set): Boolean = isInstalled(set, sizes(context))
+
+    /** [set] works, but on an earlier file that a newer one replaces: the newer one is still to download. */
+    fun needsUpdate(set: Set, sizes: Sizes): Boolean = isInstalled(set, sizes) && set.files.any { !it.inPlace(sizes) }
+
+    fun needsUpdate(context: Context, set: Set): Boolean = needsUpdate(set, sizes(context))
+
+    /**
+     * How much of [set] is still to download. Files already in place, such as the shared speaker models, don't
+     * count; an earlier file standing in for a newer one doesn't make the newer one any smaller.
+     */
+    fun missingBytes(set: Set, sizes: Sizes): Long = set.files.filter { !it.inPlace(sizes) }.sumOf { it.sizeBytes }
+
+    fun missingBytes(context: Context, set: Set): Long = missingBytes(set, sizes(context))
+
+    /** The path to load for [f]: its own, or while it downloads, that of the earlier file standing in for it. */
+    fun pathInUse(f: ModelFile, sizes: Sizes): String = f.standIn(sizes)?.path ?: f.path
+
+    fun fileInUse(context: Context, f: ModelFile): File = file(context, pathInUse(f, sizes(context)))
+
+    /** Every file a [TranscriptionEngine] for [set] would load now; a change means it should load again. */
+    fun filesInUse(context: Context, set: Set): List<String> = sizes(context).let { s -> set.files.map { pathInUse(it, s) } }
+
+    /**
+     * Files earlier versions left in [set] that nothing will use: a replaced file once its replacement is in
+     * place, and a partial download of a replaced file, which is never finished now.
+     */
+    fun obsoletePaths(set: Set, sizes: Sizes): List<String> = set.files.mapNotNull { f -> f.replaces?.let { f to it } }
+        .flatMap { (f, old) ->
+            listOfNotNull(
+                old.path.takeIf { sizes.of(it) > 0 && (f.inPlace(sizes) || sizes.of(it) != old.sizeBytes) },
+                "${old.path}.part".takeIf { sizes.of(it) > 0 },
+            )
+        }
+
+    /** Deletes [obsoletePaths]. Call it holding [recognizerLock]. */
+    fun deleteObsolete(context: Context, set: Set) {
+        obsoletePaths(set, sizes(context)).forEach { file(context, it).delete() }
+    }
 
     /** The transcription languages to choose from, each with the speech set it needs. */
     enum class Language(val set: Set) { ENGLISH(Set.SPEECH), EUROPEAN(Set.MULTILINGUAL), CJK(Set.CJK) }
@@ -110,8 +185,10 @@ object Models {
      * The speech set to transcribe with: the [chosen] one once it's downloaded, until then whichever
      * is installed (a new language keeps the old one working while it downloads); null if none is.
      */
-    fun recognizer(context: Context, chosen: Set): Set? =
-        chosen.takeIf { isInstalled(context, it) } ?: speechSets.firstOrNull { isInstalled(context, it) }
+    fun recognizer(chosen: Set, sizes: Sizes): Set? =
+        chosen.takeIf { isInstalled(it, sizes) } ?: speechSets.firstOrNull { isInstalled(it, sizes) }
+
+    fun recognizer(context: Context, chosen: Set): Set? = recognizer(chosen, sizes(context))
 
     /**
      * Held while a recognizer is chosen and loaded, and while one is deleted, so a model can't
@@ -120,22 +197,26 @@ object Models {
     val recognizerLock = Mutex()
 
     /**
-     * Deletes [sets]' recognizers, and any partial downloads of them, freeing 240–670 MB each. The
+     * The files that go with [sets]' recognizers: their own and the earlier files they replace, but not the
+     * speaker models every speech set shares.
+     */
+    fun recognizerPaths(sets: List<Set>): List<String> {
+        val shared = SPEAKER_MODELS.toSet()
+        return (sets.flatMap { it.files } - shared).flatMap { listOfNotNull(it.path, it.replaces?.path) }.distinct()
+    }
+
+    /**
+     * Deletes [sets]' recognizers, and any partial downloads of them, freeing 240–690 MB each. The
      * speaker models every speech set shares stay. Call it holding [recognizerLock].
      */
     fun removeRecognizers(context: Context, sets: List<Set>) {
-        val shared = SPEAKER_MODELS.toSet()
-        for (f in sets.flatMap { it.files } - shared) {
-            file(context, f.path).delete()
-            File(file(context, f.path).path + ".part").delete()
+        for (path in recognizerPaths(sets)) {
+            file(context, path).delete()
+            file(context, "$path.part").delete()
         }
     }
 
-    /** How much of [set] is still to download (files already in place, such as shared ones, don't count). */
-    fun missingBytes(context: Context, set: Set): Long =
-        set.files.filter { file(context, it.path).length() != it.sizeBytes }.sumOf { it.sizeBytes }
-
     fun remove(context: Context, set: Set) {
-        set.files.forEach { file(context, it.path).delete() }
+        set.files.forEach { f -> listOfNotNull(f.path, f.replaces?.path).forEach { file(context, it).delete() } }
     }
 }

@@ -34,7 +34,9 @@ class TranscriptResult(val lines: List<TranscriptLine>, val voices: Map<Int, Flo
  */
 class TranscriptionEngine(context: Context, speech: Models.Set) : Closeable {
 
-    private val recognizerDir = requireNotNull(speech.recognizerDir) { "$speech has no recognizer" }
+    init {
+        requireNotNull(speech.recognizerDir) { "$speech has no recognizer" }
+    }
 
     private val vadModel = Models.file(context, "silero_vad.onnx").absolutePath
     private val threads = 4
@@ -44,25 +46,26 @@ class TranscriptionEngine(context: Context, speech: Models.Set) : Closeable {
         assetManager = null,
         config = OfflineRecognizerConfig(
             modelConfig = run {
-                fun path(name: String) = Models.file(context, "$recognizerDir/$name").absolutePath
+                // A file that replaces an earlier one is loaded once downloaded; until then the earlier one is.
+                fun path(kind: String) = Models.fileInUse(context, speech.part(kind)).absolutePath
                 if (speech == Models.Set.CJK) {
                     OfflineModelConfig(
                         // The language is detected for each piece. Inverse text normalization adds
                         // punctuation and writes numbers as digits.
                         senseVoice = OfflineSenseVoiceModelConfig(
-                            model = path("model.int8.onnx"), language = "auto", useInverseTextNormalization = true,
+                            model = path("model"), language = "auto", useInverseTextNormalization = true,
                         ),
-                        tokens = path("tokens.txt"),
+                        tokens = path("tokens"),
                         numThreads = threads,
                     )
                 } else {
                     OfflineModelConfig(
                         transducer = OfflineTransducerModelConfig(
-                            encoder = path("encoder.int8.onnx"),
-                            decoder = path("decoder.int8.onnx"),
-                            joiner = path("joiner.int8.onnx"),
+                            encoder = path("encoder"),
+                            decoder = path("decoder"),
+                            joiner = path("joiner"),
                         ),
-                        tokens = path("tokens.txt"),
+                        tokens = path("tokens"),
                         modelType = "nemo_transducer",
                         numThreads = threads,
                     )

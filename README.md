@@ -55,7 +55,7 @@ and no server, and nothing is uploaded.
   folder, so other Android 12+ phones that save call recordings to a folder may work too,
   but that's untested.
 - A 64-bit ARM phone.
-- Storage for the models: 0.3–0.7 GB for transcription, plus 2.6 GB for summaries.
+- Storage for the models: 0.3–0.75 GB for transcription, plus 2.6 GB for summaries.
 - For the best accuracy, record calls as WAV: in the Phone app's settings, turn on
   "Use call recording V2 (experimental)", then choose WAV as the recording format.
   Compressed recordings are transcribed noticeably less accurately.
@@ -74,12 +74,12 @@ summaries can contain mistakes, so check anything important against the recordin
 ## Models
 
 - **Speech-to-text:** NVIDIA Parakeet TDT 0.6B v2 (int8) for English, or, chosen in Settings,
-  Parakeet TDT 0.6B v3 (int8) for 25 European languages, detected per call: Bulgarian, Croatian,
-  Czech, Danish, Dutch, English, Estonian, Finnish, French, German, Greek, Hungarian, Italian,
-  Latvian, Lithuanian, Maltese, Polish, Portuguese, Romanian, Russian, Slovak, Slovenian, Spanish,
-  Swedish and Ukrainian. Or SenseVoice Small (int8) for Chinese (Mandarin and Cantonese),
-  Japanese, Korean and English, also detected per call. Only the chosen one is kept; while a new
-  choice downloads, the old one keeps transcribing.
+  Parakeet TDT 0.6B v3 (int8, with its encoder re-quantized by Longhand, see below) for 25 European
+  languages, detected per call: Bulgarian, Croatian, Czech, Danish, Dutch, English, Estonian,
+  Finnish, French, German, Greek, Hungarian, Italian, Latvian, Lithuanian, Maltese, Polish,
+  Portuguese, Romanian, Russian, Slovak, Slovenian, Spanish, Swedish and Ukrainian. Or SenseVoice
+  Small (int8) for Chinese (Mandarin and Cantonese), Japanese, Korean and English, also detected per
+  call. Only the chosen one is kept; while a new choice downloads, the old one keeps transcribing.
 - **Who spoke when:** pyannote segmentation 3.0 + NeMo TitaNet speaker embeddings
 - **Pause detection:** Silero VAD
 - **Speech runtime:** [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) 1.13.8 (ONNX Runtime, CPU)
@@ -87,12 +87,26 @@ summaries can contain mistakes, so check anything important against the recordin
   [llama.cpp](https://github.com/ggml-org/llama.cpp) b11308, compiled into the app
 
 The models are downloaded from the setup screen: the speech models for the chosen language
-(~710 MB, or ~290 MB for Chinese, Japanese and Korean; required) and the summary model (~2.6 GB,
-optional). Choosing another language later in Settings downloads its recognizer (240–670 MB) and
-then deletes the old one. Downloads wait for Wi-Fi (an unmetered connection) unless you
-choose to go ahead on mobile data or a metered network. Summaries follow an English prompt, so a
-call in another language may still get its summary in English.
-After that you can turn off the app's Network permission in GrapheneOS.
+(~710 MB for English, ~730 MB for the European languages, or ~290 MB for Chinese, Japanese and
+Korean; required) and the summary model (~2.6 GB, optional). Choosing another language later in
+Settings downloads its recognizer (240–690 MB) and then deletes the old one. Downloads wait for
+Wi-Fi (an unmetered connection) unless you choose to go ahead on mobile data or a metered network.
+Summaries follow an English prompt, so a call in another language may still get its summary in
+English. After that you can turn off the app's Network permission in GrapheneOS.
+
+**The European languages encoder is Longhand's own.** sherpa-onnx's int8 conversion of Parakeet
+v3 quantizes every convolution in the encoder, and that costs a lot of accuracy, most of all on
+phone audio. Longhand quantizes sherpa-onnx's full-precision conversion itself, keeping the
+whole pre-encode (subsampling) stage and the depthwise convolutions in full precision
+(`tools/requantize_parakeet_v3.py`), and
+downloads the result from its own
+[GitHub release](https://github.com/christiantwu/longhand/releases/tag/models-1). The decoder,
+joiner and tokens are sherpa-onnx's, unchanged. On FLEURS, across all 25 languages, the word error
+rate fell from 18.1% to 11.9% on wideband audio and from 34.0% to 14.9% on audio coded like the
+Phone app's default recordings; no language got worse. Phones that downloaded the European
+languages with an earlier version keep transcribing with the old encoder while the new one
+(~670 MB) downloads over Wi-Fi, and the old one is deleted once the new one is in and checked. If
+you turned off the Network permission, turn it back on for the update.
 
 ## How it works
 
@@ -257,14 +271,36 @@ adb shell rm -r /data/local/tmp/models
 ```
 
 The local `models/` directory mirrors the layout in `engine/Models.kt`:
-- `parakeet/{encoder,decoder,joiner}.int8.onnx` and `parakeet/tokens.txt` (English), the same
-  files in `parakeet-v3/` (then choose "25 European languages" under Settings → Transcription
+- `parakeet/{encoder,decoder,joiner}.int8.onnx` and `parakeet/tokens.txt` (English), or
+  `parakeet-v3/encoder.repaired.int8.onnx` (the `models-1` release's
+  `parakeet-tdt-0.6b-v3-encoder.int8.onnx` under that name, or rebuilt as below),
+  `parakeet-v3/{decoder,joiner}.int8.onnx`
+  and `parakeet-v3/tokens.txt` (then choose "25 European languages" under Settings → Transcription
   language), or `sensevoice/model.int8.onnx` and `sensevoice/tokens.txt` (then choose "Chinese,
   Japanese and Korean")
 - `segmentation.onnx`, `embedding.onnx` and `silero_vad.onnx`
 - `llm/qwen3.5-4b-q4_0.gguf` for summaries
 
 Release builds can't use `run-as`; they download the models in the app.
+
+### Rebuilding the European languages encoder
+
+The Parakeet v3 encoder the app downloads (`parakeet-tdt-0.6b-v3-encoder.int8.onnx` in the
+[models-1](https://github.com/christiantwu/longhand/releases/tag/models-1) release) is made by
+`tools/requantize_parakeet_v3.py`. It downloads sherpa-onnx's full-precision conversion (2.5 GB,
+pinned to a commit and hash-checked), quantizes it with ONNX Runtime, and prints the result's size
+and SHA-256. Quantizing needs about 8 GB of RAM.
+
+```sh
+pip install onnxruntime==1.30.0 onnx==1.23.1
+tools/requantize_parakeet_v3.py   # → build/requantize-parakeet-v3/parakeet-tdt-0.6b-v3-encoder.int8.onnx
+cp build/requantize-parakeet-v3/parakeet-tdt-0.6b-v3-encoder.int8.onnx models/parakeet-v3/encoder.repaired.int8.onnx
+```
+
+With those versions the output is bit-identical to the hosted file, and the script says whether it
+matches the size and hash in `engine/Models.kt`. The model is NVIDIA's, under CC-BY-4.0, so the
+notes of the release that hosts the file must credit NVIDIA, link the licence and the original model,
+and say the encoder was re-quantized by Longhand.
 
 ## Debugging
 
