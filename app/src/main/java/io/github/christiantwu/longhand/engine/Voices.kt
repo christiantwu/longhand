@@ -44,6 +44,40 @@ object VoiceMath {
         return if (best.second - second >= margin) best.first else null
     }
 
+    // "Recognise voices": in the private sample calls the same person scored 0.59–0.82 across calls
+    // and different people at most 0.53. Both are set to keep wrong suggestions rare.
+    const val SUGGEST_THRESHOLD = 0.56f
+    const val SUGGEST_MARGIN = 0.10f
+
+    /**
+     * Which known voice (by id, from their [centroid]s) a speaker's [voice] sounds like: the closest
+     * one, if it is close enough and clearly closer than the next. Null if that one is [excluded]
+     * (turned down for this speaker, or already someone else's name in this call): the next best
+     * isn't offered instead, since this voice sounds more like someone it isn't.
+     */
+    fun suggest(
+        voice: FloatArray, known: Map<Long, FloatArray>, excluded: Set<Long> = emptySet(),
+        threshold: Float = SUGGEST_THRESHOLD, margin: Float = SUGGEST_MARGIN,
+    ): Long? {
+        val scored = known.map { (id, v) -> id to cosine(voice, v) }.sortedByDescending { it.second }
+        val best = scored.firstOrNull() ?: return null
+        if (best.second < threshold || best.first in excluded) return null
+        val second = scored.getOrNull(1)?.second ?: return best.first
+        return if (best.second - second >= margin) best.first else null
+    }
+
+    /** A known voice's centroid: the normalised mean of its samples (unit length), or null without any. */
+    fun centroid(samples: List<FloatArray>): FloatArray? {
+        val size = samples.firstOrNull()?.size ?: return null
+        val sum = FloatArray(size)
+        for (s in samples) {
+            if (s.size != size) continue
+            val unit = normalize(s)
+            for (i in sum.indices) sum[i] += unit[i]
+        }
+        return normalize(sum)
+    }
+
     fun toBytes(v: FloatArray): ByteArray =
         ByteBuffer.allocate(v.size * 4).order(ByteOrder.LITTLE_ENDIAN).apply { asFloatBuffer().put(v) }.array()
 

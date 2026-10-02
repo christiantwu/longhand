@@ -23,6 +23,8 @@ data class AppSettings(
     val phoneNoticeHidden: Boolean = false,
     /** The language calls are transcribed in, which decides the speech model kept on the phone. */
     val language: Models.Language = Models.Language.ENGLISH,
+    /** Suggest the names of people the user has named when their voice is heard in another call. */
+    val recogniseVoices: Boolean = false,
 )
 
 private val Context.dataStore by preferencesDataStore("settings")
@@ -37,19 +39,10 @@ class Settings(private val context: Context) {
         val language = stringPreferencesKey("language")
         /** 0.6.0, before the third language: true meant the 25 European languages. */
         val multilingual = booleanPreferencesKey("multilingual")
+        val recogniseVoices = booleanPreferencesKey("recognise_voices")
     }
 
-    val flow: Flow<AppSettings> = context.dataStore.data.map { p ->
-        AppSettings(
-            folderUri = p[Keys.folderUri],
-            chargingOnly = p[Keys.chargingOnly] ?: false,
-            setupDone = p[Keys.setupDone] ?: false,
-            skipBefore = p[Keys.skipBefore] ?: 0L,
-            phoneNoticeHidden = p[Keys.phoneNoticeHidden] ?: false,
-            language = Models.Language.entries.firstOrNull { it.name == p[Keys.language] }
-                ?: if (p[Keys.multilingual] == true) Models.Language.EUROPEAN else Models.Language.ENGLISH,
-        )
-    }
+    val flow: Flow<AppSettings> = context.dataStore.data.map(::from)
 
     suspend fun current(): AppSettings = flow.first()
 
@@ -63,4 +56,18 @@ class Settings(private val context: Context) {
     suspend fun setSkipBefore(v: Long) = set(Keys.skipBefore, v)
     suspend fun setPhoneNoticeHidden(v: Boolean) = set(Keys.phoneNoticeHidden, v)
     suspend fun setLanguage(v: Models.Language) = set(Keys.language, v.name)
+    suspend fun setRecogniseVoices(v: Boolean) = set(Keys.recogniseVoices, v)
+
+    companion object {
+        fun from(p: Preferences) = AppSettings(
+            folderUri = p[Keys.folderUri],
+            chargingOnly = p[Keys.chargingOnly] ?: false,
+            setupDone = p[Keys.setupDone] ?: false,
+            skipBefore = p[Keys.skipBefore] ?: 0L,
+            phoneNoticeHidden = p[Keys.phoneNoticeHidden] ?: false,
+            language = Models.Language.entries.firstOrNull { it.name == p[Keys.language] }
+                ?: if (p[Keys.multilingual] == true) Models.Language.EUROPEAN else Models.Language.ENGLISH,
+            recogniseVoices = p[Keys.recogniseVoices] ?: false,
+        )
+    }
 }

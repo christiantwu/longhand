@@ -45,6 +45,9 @@ and no server, and nothing is uploaded.
   yourself, such as Seedvault.
 - To tell speakers apart, Longhand stores a voice fingerprint for each speaker in a call, and
   one of your own voice if you mark it. They're stored and backed up like the transcripts.
+- With Recognise voices turned on in Settings (it's off by default), Longhand also keeps a
+  voiceprint for each person you name, to suggest their name in other calls. You can forget
+  them one by one or all at once.
 
 ## Requirements
 
@@ -141,6 +144,14 @@ After that you can turn off the app's Network permission in GrapheneOS.
    one stretch of half a second is clear of other voices. Transcripts made before 0.5.0 may have
    one speaker for two people, so their voices are never learned. Choosing **Me** there labels
    that call only until its redo, which renumbers the speakers.
+
+   **Recognising other people** (Settings → Recognise voices, off by default): naming a speaker
+   files their voice under that name (`VoiceDao`). In another call, a speaker still shown as
+   "Speaker N" gets a suggestion when their voice is close to the average of a named person's
+   voices (cosine similarity ≥ 0.56, and 0.10 ahead of the next person); nothing is renamed until
+   you tap **That's them**. Only names you choose are learned, never the caller's name filled in
+   automatically. In the sample calls the same person scored 0.59–0.82 across calls and different
+   people at most 0.53.
 4. Transcripts are stored in Room (app-private storage). They can be searched by name, topic or
    words, and shared or saved as `.md` or `.txt`. Tap a line to play the audio from that point.
    **Share → Share audio** sends the recording file itself, even before it's transcribed or if

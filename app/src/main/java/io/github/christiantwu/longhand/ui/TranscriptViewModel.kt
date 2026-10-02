@@ -19,6 +19,7 @@ import io.github.christiantwu.longhand.TAG
 import io.github.christiantwu.longhand.data.AppDatabase
 import io.github.christiantwu.longhand.data.Pipeline
 import io.github.christiantwu.longhand.data.CallerLookup
+import io.github.christiantwu.longhand.data.KnownVoiceRow
 import io.github.christiantwu.longhand.data.Recording
 import io.github.christiantwu.longhand.data.Segment
 import io.github.christiantwu.longhand.data.Settings
@@ -34,13 +35,20 @@ import io.github.christiantwu.longhand.export.TranscriptFormatter
 import io.github.christiantwu.longhand.work.Work
 import io.github.christiantwu.longhand.work.learnVoicesFromAudio
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -49,24 +57,92 @@ import java.util.concurrent.CancellationException
 
 data class PlaybackState(val playing: Boolean = false, val positionMs: Long = 0, val error: String? = null)
 
+/** "Recognise voices": a known voice suggested for a speaker, and how many calls it was learned from. */
+data class VoiceSuggestion(val voiceId: Long, val name: String, val calls: Int)
+
+/** A known voice with the centroid of its samples, for [voiceSuggestions]. */
+class KnownVoiceCentroid(val voice: KnownVoiceRow, val centroid: FloatArray)
+
+/**
+ * The known voice to suggest for each speaker of one call who is still shown as "Speaker N" and has
+ * a stored [voices] entry ([VoiceMath.suggest]). A name already given to someone in this call is
+ * never suggested, nor one [rejected] for that speaker.
+ */
+fun voiceSuggestions(
+    names: SpeakerNames, voices: Map<Int, FloatArray>, known: List<KnownVoiceCentroid>, rejected: Map<Int, Set<Long>>,
+): Map<Int, VoiceSuggestion> {
+    if (known.isEmpty()) return emptyMap()
+    val centroids = known.associate { it.voice.id to it.centroid }
+    val given = names.manual.values.map { it.trim() }.filter { it.isNotEmpty() }
+    val inThisCall = known.filter { k -> given.any { it.equals(k.voice.name, ignoreCase = true) } }.map { it.voice.id }.toSet()
+    class Pick(val speaker: Int, val voiceId: Long, val score: Float)
+    val picks = names.speakers.sorted().mapNotNull { speaker ->
+        if (!names.isUnnamed(speaker)) return@mapNotNull null
+        val voice = voices[speaker] ?: return@mapNotNull null
+        val id = VoiceMath.suggest(voice, centroids, inThisCall + rejected[speaker].orEmpty()) ?: return@mapNotNull null
+        Pick(speaker, id, VoiceMath.cosine(voice, centroids.getValue(id)))
+    }
+    // One person can't be two speakers: offer each known voice only to the speaker most like it.
+    val best = picks.groupBy { it.voiceId }.mapValues { (_, p) -> p.maxBy { it.score }.speaker }
+    val out = LinkedHashMap<Int, VoiceSuggestion>()
+    for (p in picks) {
+        if (best[p.voiceId] != p.speaker) continue
+        val k = known.first { it.voice.id == p.voiceId }.voice
+        out[p.speaker] = VoiceSuggestion(p.voiceId, k.name, k.calls)
+    }
+    return out
+}
+
+@OptIn(ExperimentalCoroutinesApi::class)
 class TranscriptViewModel(app: Application, savedState: SavedStateHandle) : AndroidViewModel(app) {
 
     val id: Long = checkNotNull(savedState["id"])
     private val dao = AppDatabase.get(app).recordings()
+    private val voiceDao = AppDatabase.get(app).voices()
+    private val settingsStore = Settings(app)
     private val format: (String) -> String = CallerLookup::formatNumber
 
     val recording: StateFlow<Recording?> = dao.observe(id).stateIn(viewModelScope, SharingStarted.Eagerly, null)
     val segments: StateFlow<List<Segment>> = dao.observeSegments(id).stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
-    /** How each speaker is named, from hand-typed names, the owner's voice and the caller. */
-    val names: StateFlow<SpeakerNames> = combine(recording, segments, dao.observeSpeakerNames(id)) { rec, segs, manual ->
-        SpeakerNames(
+    /** The recording with its speakers' names, from the same moment (the owner and caller come from it). */
+    private val named: StateFlow<Pair<Recording?, SpeakerNames>> = combine(recording, segments, dao.observeSpeakerNames(id)) { rec, segs, manual ->
+        rec to SpeakerNames(
             manual = manual.associate { it.speaker to it.name },
             owner = rec?.ownerSpeaker,
             callerName = rec?.let { CallText.caller(it, format) },
             speakers = segs.map { it.speaker }.toSet(),
         )
-    }.stateIn(viewModelScope, SharingStarted.Eagerly, SpeakerNames())
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, null to SpeakerNames())
+
+    /** How each speaker is named, from hand-typed names, the owner's voice and the caller. */
+    val names: StateFlow<SpeakerNames> = named.map { it.second }.stateIn(viewModelScope, SharingStarted.Eagerly, SpeakerNames())
+
+    /** Settings → Recognise voices. */
+    val recogniseVoices: StateFlow<Boolean> = settingsStore.flow.map { it.recogniseVoices }.distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+    private val knownVoices: Flow<List<KnownVoiceCentroid>> =
+        combine(voiceDao.observeKnown(), voiceDao.observeSampleEmbeddings()) { known, samples ->
+            val byVoice = samples.groupBy({ it.voiceId }, { VoiceMath.fromBytes(it.embedding) })
+            known.mapNotNull { k -> VoiceMath.centroid(byVoice[k.id].orEmpty())?.let { KnownVoiceCentroid(k, it) } }
+        }
+
+    /**
+     * "Recognise voices": by speaker, the known voice that someone still shown as "Speaker N" sounds
+     * like. Empty while the setting is off, and in a transcript from an older pipeline (one speaker
+     * there may be two people).
+     */
+    val suggestions: StateFlow<Map<Int, VoiceSuggestion>> = recogniseVoices.flatMapLatest { on ->
+        if (!on) flowOf(emptyMap())
+        else combine(named, voiceDao.observeSpeakerVoices(id), knownVoices, voiceDao.observeRejections(id)) { (rec, speakerNames), voices, known, rejections ->
+            if (rec == null || rec.pipeline < Pipeline.CURRENT) emptyMap()
+            else voiceSuggestions(
+                speakerNames, voices.associate { it.speaker to VoiceMath.fromBytes(it.embedding) }, known,
+                rejections.groupBy({ it.speaker }, { it.voiceId }).mapValues { it.value.toSet() },
+            )
+        }
+    }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
 
     /** True while the app learns the owner's voice from an older transcript. */
     val learningVoice = MutableStateFlow(false)
@@ -138,6 +214,8 @@ class TranscriptViewModel(app: Application, savedState: SavedStateHandle) : Andr
         if (!stillShowing(transcript)) return@launch
         dao.setOwnerByHand(id, speaker)
         dao.deleteSpeakerName(id, speaker)
+        // The owner's voice is learned into their own voiceprint, not as a known voice.
+        voiceDao.unlink(id, speaker)
         // A transcript from an older pipeline may have put two people under one speaker, so its
         // voice isn't learned: the call is labelled, and its redo on the charger separates them.
         if ((dao.get(id)?.pipeline ?: 0) >= Pipeline.CURRENT) {
@@ -158,18 +236,57 @@ class TranscriptViewModel(app: Application, savedState: SavedStateHandle) : Andr
         resummarize()
     }
 
+    /** A name chosen in "Who is this?" (blank clears it). With Recognise voices on, the voice is learned under it. */
     fun nameSpeaker(speaker: Int, name: String, transcript: Long?) = viewModelScope.launch(Dispatchers.IO) {
         if (!stillShowing(transcript)) return@launch
         if (name.isBlank()) dao.deleteSpeakerName(id, speaker)
         else dao.upsertSpeakerNames(listOf(SpeakerName(id, speaker, name.trim())))
         resummarize()
+        learnName(speaker, name, transcript)
     }
 
-    /** Older transcripts have no stored voices; compute this call's from its audio once. */
-    private suspend fun learnVoiceFromAudio(speaker: Int): FloatArray? {
+    /** "That's them": exactly as if the suggested name were chosen in "Who is this?". */
+    fun confirmSuggestion(speaker: Int, transcript: Long?) {
+        val suggestion = suggestions.value[speaker] ?: return
+        nameSpeaker(speaker, suggestion.name, transcript)
+    }
+
+    /** "Not them": that known voice isn't suggested for this speaker again. */
+    fun rejectSuggestion(speaker: Int, transcript: Long?) {
+        val suggestion = suggestions.value[speaker] ?: return
+        viewModelScope.launch(Dispatchers.IO) {
+            if (stillShowing(transcript)) voiceDao.reject(id, speaker, suggestion.voiceId)
+        }
+    }
+
+    /**
+     * Recognise voices: the speaker's voice becomes a sample of the known voice with the [name] the
+     * user chose (a cleared name removes the link). Only while the setting is on, and only in a
+     * transcript made by this version: an older one may have put two people under one speaker.
+     */
+    private suspend fun learnName(speaker: Int, name: String, transcript: Long?) {
+        val rec = dao.get(id)
+        // The owner's voice goes into their own voiceprint, never a known voice.
+        val learns = name.isNotBlank() && settingsStore.current().recogniseVoices && rec != null &&
+            rec.pipeline >= Pipeline.CURRENT && rec.ownerSpeaker != speaker
+        if (!learns) {
+            voiceDao.unlink(id, speaker)
+            return
+        }
+        // Only a call with no stored voices at all needs its audio analysed. In one transcribed with
+        // voices, a speaker without one said too little to fingerprint, and the audio won't change that.
+        if (dao.voices(id).isEmpty()) learnVoiceFromAudio(speaker, mine = false)
+        voiceDao.link(id, speaker, name, transcript)
+    }
+
+    /**
+     * Older transcripts have no stored voices; compute this call's from its audio once. For the
+     * owner's voice ([mine]), [learningVoice] is on meanwhile.
+     */
+    private suspend fun learnVoiceFromAudio(speaker: Int, mine: Boolean = true): FloatArray? {
         val rec = dao.get(id) ?: return null
         if (!Models.speechReady(getApplication())) return null
-        learningVoice.value = true
+        if (mine) learningVoice.value = true
         return try {
             VoiceAnalyzer(getApplication()).use { learnVoicesFromAudio(getApplication(), dao, rec, it) }[speaker]
         } catch (e: CancellationException) {
@@ -178,7 +295,7 @@ class TranscriptViewModel(app: Application, savedState: SavedStateHandle) : Andr
             Log.w(TAG, "couldn't learn the voice from ${rec.displayName}: ${e.message}")
             null
         } finally {
-            learningVoice.value = false
+            if (mine) learningVoice.value = false
         }
     }
 

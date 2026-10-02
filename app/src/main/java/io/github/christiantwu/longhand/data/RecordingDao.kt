@@ -151,7 +151,8 @@ interface RecordingDao {
     /**
      * Stores a finished transcript with its speakers' voice fingerprints, and queues a new summary
      * when [summarize] is true. Speakers are numbered afresh, so names given to the previous
-     * transcript's speakers are dropped. A [redo] of an old transcript (the same audio) keeps its
+     * transcript's speakers are dropped, and so are their links to known voices and the
+     * suggestions turned down for them. A [redo] of an old transcript (the same audio) keeps its
      * summary until the new one replaces it, unless no speech was found this time, and isn't
      * announced again.
      */
@@ -173,6 +174,9 @@ interface RecordingDao {
         deleteVoices(id)
         insertVoices(voices)
         deleteSpeakerNames(id)
+        deleteVoiceSamples(id)
+        deleteVoiceRejections(id)
+        deleteUnusedKnownVoices()
         markDone(id, durationMs, System.currentTimeMillis(), processingMs, ownerSpeaker,
             if (summarize && segments.isNotEmpty()) SummaryStatus.PENDING else SummaryStatus.NONE,
             keepSummary = redo && segments.isNotEmpty(), pipeline = Pipeline.CURRENT, redo = redo)
@@ -211,9 +215,18 @@ interface RecordingDao {
     @Query("UPDATE recordings SET announced = 1 WHERE id IN (:ids)")
     suspend fun markAnnounced(ids: List<Long>)
 
-    /** Deletes a call's row; its transcript, voices and speaker names go with it (foreign keys). */
+    /**
+     * Deletes a call's row; its transcript, voices, speaker names and links to known voices go with
+     * it (foreign keys), and so does a known voice learned only from this call.
+     */
+    @Transaction
+    suspend fun delete(id: Long) {
+        deleteRow(id)
+        deleteUnusedKnownVoices()
+    }
+
     @Query("DELETE FROM recordings WHERE id = :id")
-    suspend fun delete(id: Long)
+    suspend fun deleteRow(id: Long)
 
     /** New transcripts whose summary is still to come, which their announcement waits for. */
     @Query("SELECT COUNT(*) FROM recordings WHERE status = 'DONE' AND announced = 0 AND summaryStatus IN ('PENDING', 'PROCESSING')")
@@ -365,4 +378,16 @@ interface RecordingDao {
 
     @Query("DELETE FROM speaker_names WHERE recordingId = :id")
     suspend fun deleteSpeakerNames(id: Long)
+
+    // ---- known voices ("Recognise voices"; the rest is in VoiceDao) ----
+
+    @Query("DELETE FROM voice_samples WHERE recordingId = :id")
+    suspend fun deleteVoiceSamples(id: Long)
+
+    @Query("DELETE FROM voice_rejections WHERE recordingId = :id")
+    suspend fun deleteVoiceRejections(id: Long)
+
+    /** A known voice left without samples is forgotten, as in VoiceDao.deleteUnused. */
+    @Query("DELETE FROM known_voices WHERE id NOT IN (SELECT voiceId FROM voice_samples)")
+    suspend fun deleteUnusedKnownVoices()
 }

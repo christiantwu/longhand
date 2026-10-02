@@ -95,3 +95,40 @@ data class SpeakerName(val recordingId: Long, val speaker: Int, val name: String
     foreignKeys = [ForeignKey(Recording::class, ["id"], ["recordingId"], onDelete = ForeignKey.CASCADE)],
 )
 class SpeakerVoice(val recordingId: Long, val speaker: Int, val embedding: ByteArray)
+
+/** Someone the user has named, whose voice "Recognise voices" suggests in other calls. */
+@Entity(tableName = "known_voices", indices = [Index(value = ["nameKey"], unique = true)])
+data class KnownVoice(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val name: String,
+    /** [keyOf] the name. SQLite's NOCASE folds only A-Z, so "Émile" and "émile" would be two people. */
+    val nameKey: String,
+) {
+    companion object {
+        fun keyOf(name: String) = name.trim().lowercase(java.util.Locale.ROOT)
+    }
+}
+
+/** A speaker the user named as a [KnownVoice]: their [SpeakerVoice] is one sample of that voice. */
+@Entity(
+    tableName = "voice_samples",
+    primaryKeys = ["recordingId", "speaker"],
+    foreignKeys = [
+        ForeignKey(Recording::class, ["id"], ["recordingId"], onDelete = ForeignKey.CASCADE),
+        ForeignKey(KnownVoice::class, ["id"], ["voiceId"], onDelete = ForeignKey.CASCADE),
+    ],
+    indices = [Index("voiceId")],
+)
+data class VoiceSample(val recordingId: Long, val speaker: Int, val voiceId: Long)
+
+/** "Not them": the known voice is never suggested for this speaker again. */
+@Entity(
+    tableName = "voice_rejections",
+    primaryKeys = ["recordingId", "speaker", "voiceId"],
+    foreignKeys = [
+        ForeignKey(Recording::class, ["id"], ["recordingId"], onDelete = ForeignKey.CASCADE),
+        ForeignKey(KnownVoice::class, ["id"], ["voiceId"], onDelete = ForeignKey.CASCADE),
+    ],
+    indices = [Index("voiceId")],
+)
+data class VoiceRejection(val recordingId: Long, val speaker: Int, val voiceId: Long)

@@ -20,6 +20,7 @@ import io.github.christiantwu.longhand.data.AppSettings
 import io.github.christiantwu.longhand.data.CallRow
 import io.github.christiantwu.longhand.data.CallerLookup
 import io.github.christiantwu.longhand.data.FolderScanner
+import io.github.christiantwu.longhand.data.KnownVoiceRow
 import io.github.christiantwu.longhand.data.Settings
 import io.github.christiantwu.longhand.engine.Models
 import io.github.christiantwu.longhand.engine.VoiceProfile
@@ -78,6 +79,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     private val settingsStore = Settings(app)
     private val dao = AppDatabase.get(app).recordings()
+    private val voiceDao = AppDatabase.get(app).voices()
     private val workManager = WorkManager.getInstance(app)
 
     val settings: StateFlow<AppSettings?> = settingsStore.flow.stateIn(viewModelScope, SharingStarted.Eagerly, null)
@@ -217,6 +219,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         VoiceProfile(getApplication()).clear()
         refresh()
     }
+
+    /** The people Recognise voices has learned, by name, with how many calls each was learned from. */
+    val knownVoices: StateFlow<List<KnownVoiceRow>> =
+        voiceDao.observeKnown().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    /** Turning Recognise voices off also forgets every voice it learned. */
+    fun setRecogniseVoices(on: Boolean) = viewModelScope.launch(Dispatchers.IO) {
+        settingsStore.setRecogniseVoices(on)
+        if (!on) voiceDao.forgetAll()
+    }
+
+    fun forgetKnownVoice(id: Long) = viewModelScope.launch(Dispatchers.IO) { voiceDao.forget(id) }
+
+    fun forgetAllKnownVoices() = viewModelScope.launch(Dispatchers.IO) { voiceDao.forgetAll() }
 
     /** Saves the choices before [onDone] runs, so no scan can start with the old settings. */
     fun finishSetup(includeExisting: Boolean, onDone: () -> Unit) = viewModelScope.launch {

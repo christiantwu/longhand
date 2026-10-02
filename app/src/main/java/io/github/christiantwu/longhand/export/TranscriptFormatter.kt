@@ -23,10 +23,15 @@ data class SpeakerNames(
         manual[speaker]?.takeIf { it.isNotBlank() }?.let { return it.trim() }
         if (speaker == owner) return "You"
         if (owner != null && callerName != null && speakers.size == 2 && speaker in speakers) return callerName
-        return "Speaker ${speaker + 1}"
+        return unnamedLabel(speaker)
     }
 
     fun isOwner(speaker: Int) = speaker == owner
+
+    /** Shown as "Speaker N": no name typed, not the owner, and not given the caller's name. */
+    fun isUnnamed(speaker: Int) = manual[speaker].isNullOrBlank() && label(speaker) == unnamedLabel(speaker)
+
+    private fun unnamedLabel(speaker: Int) = "Speaker ${speaker + 1}"
 }
 
 /** The words used for a call around the app: list rows, notifications, exports. */

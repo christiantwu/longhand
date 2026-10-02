@@ -30,7 +30,9 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.MoreVert
@@ -84,6 +86,8 @@ fun TranscriptScreen(onBack: () -> Unit) {
     val names by vm.names.collectAsStateWithLifecycle()
     val playback by vm.playback.collectAsStateWithLifecycle()
     val learning by vm.learningVoice.collectAsStateWithLifecycle()
+    val suggestions by vm.suggestions.collectAsStateWithLifecycle()
+    val recognising by vm.recogniseVoices.collectAsStateWithLifecycle()
     val turns = remember(segments) { TranscriptFormatter.turns(segments) }
     val voiceKnown = remember { VoiceProfile(context).samples() > 0 }
 
@@ -213,6 +217,17 @@ fun TranscriptScreen(onBack: () -> Unit) {
                         modifier = note,
                     )
                 }
+                // Recognise voices. A name just chosen reaches the labels a moment before the suggestions catch up.
+                suggestions.filterKeys { names.isUnnamed(it) }.forEach { (speaker, suggestion) ->
+                    item {
+                        Notice(
+                            "Recognised voice", "${names.label(speaker)} sounds like ${suggestion.name}.",
+                            action = "That's them", onAction = { vm.confirmSuggestion(speaker, r.transcribedAt) },
+                            dismiss = "Not them", onDismiss = { vm.rejectSuggestion(speaker, r.transcribedAt) },
+                            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp),
+                        )
+                    }
+                }
                 // With each row's own 2dp, the transcript starts 14dp below what's above it.
                 item { Spacer(Modifier.height(12.dp)) }
                 if (turns.isEmpty()) item {
@@ -288,9 +303,11 @@ fun TranscriptScreen(onBack: () -> Unit) {
     }
 
     asking?.let { (speaker, transcript) ->
+        val current = (rec?.pipeline ?: 0) >= Pipeline.CURRENT
         SpeakerDialog(
             speaker = speaker, names = names, sample = turns.firstOrNull { it.speaker == speaker }?.text,
-            learnsVoice = (rec?.pipeline ?: 0) >= Pipeline.CURRENT,
+            learnsVoice = current, suggestion = suggestions[speaker]?.takeIf { names.isUnnamed(speaker) },
+            learnsNames = recognising && current && !names.isOwner(speaker),
             onMe = { vm.speakerIsMe(speaker, transcript) }, onNotMe = { vm.notMe(transcript) },
             onName = { vm.nameSpeaker(speaker, it, transcript) },
             onDismiss = { asking = null },
@@ -465,23 +482,33 @@ private fun PlayerBar(
 @Composable
 private fun SpeakerDialog(
     speaker: Int, names: SpeakerNames, sample: String?, learnsVoice: Boolean,
+    suggestion: VoiceSuggestion?, learnsNames: Boolean,
     onMe: () -> Unit, onNotMe: () -> Unit, onName: (String) -> Unit, onDismiss: () -> Unit,
 ) {
     var typed by remember { mutableStateOf(names.manual[speaker].orEmpty()) }
     val isMe = names.isOwner(speaker)
-    // A transcript from before 0.5.0 may have one speaker for two people, so its voices aren't learned.
     val choices = buildList {
+        suggestion?.let { s ->
+            add(SpeakerChoice(s.name, "Sounds like them · from ${s.calls} ${if (s.calls == 1) "call" else "calls"}") { onName(s.name); onDismiss() })
+        }
+        // A transcript from before 0.5.0 may have one speaker for two people, so its voices aren't learned.
         if (!isMe) add(SpeakerChoice("Me", if (learnsVoice) "Learns your voice so you're labelled in every call" else "Labels you in this call") { onMe(); onDismiss() })
         else add(SpeakerChoice("That's not me", "Remove the “You” label from this call") { onNotMe(); onDismiss() })
         names.callerName?.let { caller ->
-            if (!isMe && names.label(speaker) != caller) add(SpeakerChoice(caller, "The person you were talking to") { onName(caller); onDismiss() })
+            if (isMe || caller.equals(suggestion?.name, ignoreCase = true)) return@let
+            when {
+                names.label(speaker) != caller -> add(SpeakerChoice(caller, "The person you were talking to") { onName(caller); onDismiss() })
+                // Named only automatically, from the number: confirming it is what lets their voice be learned.
+                learnsNames && names.manual[speaker] == null ->
+                    add(SpeakerChoice(caller, "Confirm, so Longhand recognises their voice in other calls") { onName(caller); onDismiss() })
+            }
         }
     }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Who is this?") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
                 if (sample != null) Text("“${sample.take(120)}${if (sample.length > 120) "…" else ""}”",
                     style = MaterialTheme.typography.bodyMedium)
                 // The dialog sits on surfaceContainerHigh, so the rows take the next tone up to stand out.
@@ -495,6 +522,10 @@ private fun SpeakerDialog(
                 OutlinedTextField(
                     value = typed, onValueChange = { typed = it }, singleLine = true,
                     label = { Text("Another name") }, modifier = Modifier.fillMaxWidth(),
+                    // With Recognise voices on, any name chosen here is learned, the choices above included.
+                    supportingText = if (learnsNames) {
+                        { Text("Longhand will suggest this name when it hears this voice in other calls.") }
+                    } else null,
                 )
             }
         },
