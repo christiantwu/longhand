@@ -1,6 +1,10 @@
-# Longhand
+<p align="center">
+  <img src="design/icon/ink-wave.svg" width="112" alt="Longhand logo">
+</p>
 
-*Get it in writing.*
+<h1 align="center">Longhand</h1>
+
+<p align="center"><em>Get it in writing.</em></p>
 
 Longhand turns your recorded phone calls into transcripts you can read, search and share:
 who said what, when, and a short summary of what was agreed. It's made for GrapheneOS,
