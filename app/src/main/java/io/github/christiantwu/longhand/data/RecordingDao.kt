@@ -10,32 +10,80 @@ import androidx.room.Upsert
 import io.github.christiantwu.longhand.engine.VoiceMath
 import kotlinx.coroutines.flow.Flow
 
-/** A list row: the recording plus the start of its transcript, for calls without a summary. */
-data class CallRow(@Embedded val rec: Recording, val snippet: String?)
+/**
+ * A list row: the recording plus the start of its transcript, for calls without a summary. In search
+ * results, also the first transcript line that matches and when it starts.
+ */
+data class CallRow(
+    @Embedded val rec: Recording,
+    val snippet: String?,
+    val matchText: String?,
+    val matchMs: Long?,
+    /** The search these rows were found for, so a newer one typed meanwhile isn't highlighted in them. */
+    val matchQuery: String?,
+)
+
+/** Search text as a LIKE pattern that finds it literally, anywhere: `LIKE :pattern ESCAPE '\'`. */
+object SearchPattern {
+    fun contains(text: String): String =
+        "%" + text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+}
+
+/** :pattern found in the call itself: its details, summary, follow-ups or speakers' names. */
+private const val CALL_MATCHES = """(r.displayName LIKE :pattern ESCAPE '\' OR r.contactName LIKE :pattern ESCAPE '\'
+   OR r.phoneNumber LIKE :pattern ESCAPE '\' OR r.topic LIKE :pattern ESCAPE '\' OR r.summary LIKE :pattern ESCAPE '\'
+   OR r.followUps LIKE :pattern ESCAPE '\'
+   OR EXISTS (SELECT 1 FROM speaker_names n WHERE n.recordingId = r.id AND n.name LIKE :pattern ESCAPE '\'))"""
+
+/**
+ * Rows with their first line, and the first line matching :pattern (a [SearchPattern]; NULL matches
+ * none), but only when the call itself didn't match: a search for a contact opens their calls at the
+ * top, not at a line that happens to say their name.
+ */
+private const val ROWS_WITH_MATCH = """SELECT r.*,
+       (SELECT s.text FROM segments s WHERE s.recordingId = r.id ORDER BY s.startMs LIMIT 1) AS snippet,
+       CASE WHEN $CALL_MATCHES THEN NULL ELSE m.text END AS matchText,
+       CASE WHEN $CALL_MATCHES THEN NULL ELSE m.startMs END AS matchMs,
+       :query AS matchQuery
+   FROM recordings r LEFT JOIN segments m ON m.id =
+       (SELECT s.id FROM segments s WHERE s.recordingId = r.id AND s.text LIKE :pattern ESCAPE '\'
+        ORDER BY s.startMs, s.id LIMIT 1)"""
+
+/** What search looks through: the call's details and summary, the speakers' names and every line said. */
+private const val MATCHES = """($CALL_MATCHES OR m.id IS NOT NULL)"""
+
+/** A phone number's digits: numbers are stored as the call log, a file name or a contact wrote them. */
+private const val DIGITS =
+    """REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(REPLACE(r.phoneNumber, '+', ''), ' ', ''), '-', ''), '(', ''), ')', ''), '.', '')"""
 
 @Dao
 interface RecordingDao {
 
     @Query(
-        """SELECT r.*, (SELECT s.text FROM segments s WHERE s.recordingId = r.id ORDER BY s.startMs LIMIT 1) AS snippet
+        """SELECT r.*, (SELECT s.text FROM segments s WHERE s.recordingId = r.id ORDER BY s.startMs LIMIT 1) AS snippet,
+           NULL AS matchText, NULL AS matchMs, NULL AS matchQuery
            FROM recordings r ORDER BY r.lastModified DESC"""
     )
     fun observeRows(): Flow<List<CallRow>>
 
+    @Query("$ROWS_WITH_MATCH WHERE $MATCHES ORDER BY r.lastModified DESC")
+    fun searchRows(pattern: String, query: String): Flow<List<CallRow>>
+
+    /**
+     * "Calls with …": calls with the contact called [name] or with the number whose [digits] these
+     * are (compared on their last ten, so "+1 555…", "(555) …" and "555…" agree), and calls where a
+     * speaker was named [name] (a conference call, say); names ignore case, though SQLite's NOCASE
+     * folds only A-Z. A [pattern] narrows them down as [searchRows] does.
+     */
     @Query(
-        """SELECT r.*, (SELECT s.text FROM segments s WHERE s.recordingId = r.id ORDER BY s.startMs LIMIT 1) AS snippet
-           FROM recordings r
-           WHERE r.displayName LIKE '%' || :q || '%'
-              OR r.contactName LIKE '%' || :q || '%'
-              OR r.phoneNumber LIKE '%' || :q || '%'
-              OR r.topic LIKE '%' || :q || '%'
-              OR r.summary LIKE '%' || :q || '%'
-              OR r.id IN (SELECT recordingId FROM segments WHERE text LIKE '%' || :q || '%')
+        """$ROWS_WITH_MATCH
+           WHERE (TRIM(r.contactName) = :name COLLATE NOCASE
+              OR (:digits != '' AND r.phoneNumber IS NOT NULL AND SUBSTR($DIGITS, -10) = SUBSTR(:digits, -10))
+              OR EXISTS (SELECT 1 FROM speaker_names n WHERE n.recordingId = r.id AND TRIM(n.name) = :name COLLATE NOCASE))
+             AND (:pattern IS NULL OR $MATCHES)
            ORDER BY r.lastModified DESC"""
     )
-    fun searchRows(q: String): Flow<List<CallRow>>
-
-
+    fun personRows(name: String, digits: String, pattern: String?, query: String?): Flow<List<CallRow>>
 
     @Query("SELECT * FROM recordings WHERE id = :id")
     fun observe(id: Long): Flow<Recording?>

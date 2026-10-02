@@ -97,6 +97,10 @@ fun voiceSuggestions(
 class TranscriptViewModel(app: Application, savedState: SavedStateHandle) : AndroidViewModel(app) {
 
     val id: Long = checkNotNull(savedState["id"])
+
+    /** Opened from a search result: when the first matching line starts, and the text searched for. */
+    val matchAt: Long? = savedState.get<Long>("at")?.takeIf { it >= 0 }
+    val highlight: String? = savedState.get<String>("q")?.trim()?.ifEmpty { null }
     private val dao = AppDatabase.get(app).recordings()
     private val voiceDao = AppDatabase.get(app).voices()
     private val settingsStore = Settings(app)

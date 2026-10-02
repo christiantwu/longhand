@@ -1,5 +1,6 @@
 package io.github.christiantwu.longhand.ui
 
+import android.net.Uri
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -49,7 +50,10 @@ private fun AppNav() {
         composable("list") {
             RecordingsScreen(
                 vm,
-                onOpen = { nav.navigate("transcript/$it") },
+                onOpen = { id, at, q ->
+                    val args = listOfNotNull(at?.let { "at=$it" }, q?.let { "q=" + Uri.encode(it) })
+                    nav.navigate("transcript/$id" + if (args.isEmpty()) "" else args.joinToString("&", prefix = "?"))
+                },
                 onSettings = { nav.navigate("settings") },
             )
         }
@@ -59,8 +63,22 @@ private fun AppNav() {
         composable("licences") {
             LicencesScreen(onBack = { nav.popBackStack() })
         }
-        composable("transcript/{id}", arguments = listOf(navArgument("id") { type = NavType.LongType })) {
-            TranscriptScreen(onBack = { nav.popBackStack() })
+        // From a search result: the matching line's start (-1 for none) and the text searched for.
+        composable(
+            "transcript/{id}?at={at}&q={q}",
+            arguments = listOf(
+                navArgument("id") { type = NavType.LongType },
+                navArgument("at") { type = NavType.LongType; defaultValue = -1L },
+                navArgument("q") { type = NavType.StringType; nullable = true; defaultValue = null },
+            ),
+        ) {
+            TranscriptScreen(
+                onBack = { nav.popBackStack() },
+                onCallsWith = { person ->
+                    vm.person.value = person
+                    nav.popBackStack("list", inclusive = false)
+                },
+            )
         }
     }
 }

@@ -21,9 +21,12 @@ import io.github.christiantwu.longhand.data.CallRow
 import io.github.christiantwu.longhand.data.CallerLookup
 import io.github.christiantwu.longhand.data.FolderScanner
 import io.github.christiantwu.longhand.data.KnownVoiceRow
+import io.github.christiantwu.longhand.data.Recording
+import io.github.christiantwu.longhand.data.SearchPattern
 import io.github.christiantwu.longhand.data.Settings
 import io.github.christiantwu.longhand.engine.Models
 import io.github.christiantwu.longhand.engine.VoiceProfile
+import io.github.christiantwu.longhand.export.CallText
 import io.github.christiantwu.longhand.work.CallState
 import io.github.christiantwu.longhand.work.ModelDownloadWorker
 import io.github.christiantwu.longhand.work.Work
@@ -74,6 +77,20 @@ data class DeviceState(
     val redoWaiting: Int = 0,
 )
 
+/**
+ * "Calls with …": calls with the contact called [name] or with [number], and calls where a speaker
+ * was given that name.
+ */
+data class PersonFilter(val name: String, val number: String?) {
+    companion object {
+        /** The call's contact, or its number when it has no name; null when it has neither. */
+        fun of(rec: Recording): PersonFilter? {
+            val name = CallText.caller(rec, CallerLookup::formatNumber)?.trim() ?: return null
+            return PersonFilter(name, rec.phoneNumber?.takeIf { it.isNotBlank() })
+        }
+    }
+}
+
 @OptIn(ExperimentalCoroutinesApi::class)
 class AppViewModel(app: Application) : AndroidViewModel(app) {
 
@@ -86,9 +103,22 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     val query = MutableStateFlow("")
 
-    val rows: StateFlow<List<CallRow>> = query
-        .flatMapLatest { q -> if (q.isBlank()) dao.observeRows() else dao.searchRows(q.trim()) }
+    /** "Calls with …": the list shows only calls with this person. */
+    val person = MutableStateFlow<PersonFilter?>(null)
+
+    val rows: StateFlow<List<CallRow>> = combine(query, person) { q, p -> q.trim() to p }
+        .flatMapLatest { (q, p) ->
+            val pattern = q.ifEmpty { null }?.let(SearchPattern::contains)
+            when {
+                p != null -> dao.personRows(p.name, p.number?.filter(Char::isDigit).orEmpty(), pattern, q.ifEmpty { null })
+                pattern != null -> dao.searchRows(pattern, q)
+                else -> dao.observeRows()
+            }
+        }
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** Every call, whatever the search or filter: the queue notices are about all of them. */
+    val allRows: StateFlow<List<CallRow>> = dao.observeRows().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     private val refreshTick = MutableStateFlow(0)
 

@@ -152,8 +152,16 @@ After that you can turn off the app's Network permission in GrapheneOS.
    you tap **That's them**. Only names you choose are learned, never the caller's name filled in
    automatically. In the sample calls the same person scored 0.59–0.82 across calls and different
    people at most 0.53.
-4. Transcripts are stored in Room (app-private storage). They can be searched by name, topic or
-   words, and shared or saved as `.md` or `.txt`. Tap a line to play the audio from that point.
+4. Transcripts are stored in Room (app-private storage), and shared or saved as `.md` or `.txt`.
+   Tap a line to play the audio from that point.
+   **Search** looks through the caller's name and number, the file name, the topic, summary and
+   follow-ups, every line of the transcript, and the names given to speakers (including those
+   confirmed through Recognise voices). What you type is matched literally, so `50%` finds "50%".
+   A result found in the transcript shows the first matching line under the call, with the words
+   highlighted. Opening it scrolls the transcript to that line and highlights every match.
+   **Calls with …:** tap a call's avatar, or choose **⋮ → Calls with …** in a transcript, to list
+   only the calls with that contact or number, plus conference calls where a speaker was given
+   their name. A search then looks within those calls. Back, or tapping the chip, removes the filter; a search you typed stays.
    **Share → Share audio** sends the recording file itself, even before it's transcribed or if
    transcribing failed. Longhand makes no copy of its own: the app you pick can read only that
    one file, and only the file is sent, with no title or summary.

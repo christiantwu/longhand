@@ -52,6 +52,9 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -209,6 +212,13 @@ fun initialsOf(name: String): String? {
     val words = name.trim().split(Regex("\\s+")).filter { it.firstOrNull()?.isLetter() == true }
     return words.take(2).joinToString("") { it.first().uppercase() }.ifEmpty { null }
 }
+
+/** [text] with [style] over each of the [ranges], e.g. where search text occurs. */
+fun highlighted(text: String, ranges: List<IntRange>, style: SpanStyle): AnnotatedString =
+    if (ranges.isEmpty()) AnnotatedString(text) else buildAnnotatedString {
+        append(text)
+        ranges.forEach { addStyle(style, it.first, it.last + 1) }
+    }
 
 // ---- Buttons ----------------------------------------------------------------------------------
 

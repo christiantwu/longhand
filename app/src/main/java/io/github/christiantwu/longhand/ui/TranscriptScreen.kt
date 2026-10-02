@@ -30,6 +30,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -51,7 +52,9 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -60,6 +63,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -72,13 +77,15 @@ import io.github.christiantwu.longhand.data.SummaryStatus
 import io.github.christiantwu.longhand.engine.SegmentLogic
 import io.github.christiantwu.longhand.engine.VoiceProfile
 import io.github.christiantwu.longhand.export.CallText
+import io.github.christiantwu.longhand.export.SearchMatch
 import io.github.christiantwu.longhand.export.SpeakerNames
 import io.github.christiantwu.longhand.export.TranscriptFormatter
 import io.github.christiantwu.longhand.export.Turn
 import kotlinx.coroutines.launch
 
+/** [onCallsWith]: "Calls with …" was chosen, for the list to show that person's calls. */
 @Composable
-fun TranscriptScreen(onBack: () -> Unit) {
+fun TranscriptScreen(onBack: () -> Unit, onCallsWith: (PersonFilter) -> Unit) {
     val vm: TranscriptViewModel = viewModel()
     val context = LocalContext.current
     val rec by vm.recording.collectAsStateWithLifecycle()
@@ -135,10 +142,24 @@ fun TranscriptScreen(onBack: () -> Unit) {
     // Room for "1:02:03" beside every line once a call runs past the hour, so the text stays in one column.
     val clockWidth = if ((turns.lastOrNull()?.startMs ?: 0) >= 3_600_000) 50.dp else 38.dp
 
+    // From a search result: once the transcript is in, the turn with the match goes to the top, once.
+    val listState = rememberLazyListState()
+    var jumped by rememberSaveable { mutableStateOf(false) }
+    LaunchedEffect(turns, done) {
+        val at = vm.matchAt
+        if (jumped || at == null || !done || turns.isEmpty()) return@LaunchedEffect
+        withFrameNanos {} // by the next frame, the list has laid these turns out
+        // The turns are the list's last items.
+        val turn = turns.indexOfLast { it.startMs <= at }.coerceAtLeast(0)
+        listState.scrollToItem(listState.layoutInfo.totalItemsCount - turns.size + turn)
+        jumped = true
+    }
+
     // Only the list is inset: the player bar paints its colour under the navigation bar.
     Box(Modifier.fillMaxSize()) {
         LazyColumn(
             Modifier.fillMaxSize().safeDrawingPadding(),
+            state = listState,
             contentPadding = PaddingValues(bottom = if (showPlayer) 96.dp else 32.dp),
         ) {
             item {
@@ -179,6 +200,13 @@ fun TranscriptScreen(onBack: () -> Unit) {
                                     menuOpen = false
                                     pickContact.launch(Intent(Intent.ACTION_PICK).setType(ContactsContract.CommonDataKinds.Phone.CONTENT_TYPE))
                                 })
+                                r?.let(PersonFilter::of)?.let { person ->
+                                    DropdownMenuItem(text = { Text("Calls with ${person.name}") }, onClick = click@{
+                                        if (!menuOpen) return@click
+                                        menuOpen = false
+                                        onCallsWith(person)
+                                    })
+                                }
                                 if (done) {
                                     DropdownMenuItem(text = { Text("Save as Markdown…") }, onClick = { if (menuOpen) { menuOpen = false; saveMarkdown.launch("$base.md") } })
                                     DropdownMenuItem(text = { Text("Save as text…") }, onClick = { if (menuOpen) { menuOpen = false; saveText.launch("$base.txt") } })
@@ -242,8 +270,9 @@ fun TranscriptScreen(onBack: () -> Unit) {
                         ?: turns.indexOfLast { pos >= it.startMs && pos < it.endMs }.takeIf { it >= 0 }
                         ?: turns.indexOfLast { it.startMs <= pos }
                 }
-                itemsIndexed(turns) { i, turn ->
-                    TurnItem(turn, names, active = i == active, clockWidth = clockWidth,
+                // Keyed, so a notice appearing above (a suggestion, say) doesn't move the lines being read.
+                itemsIndexed(turns, key = { i, _ -> "turn-$i" }) { i, turn ->
+                    TurnItem(turn, names, active = i == active, clockWidth = clockWidth, highlight = vm.highlight,
                         onSpeaker = { asking = turn.speaker to r.transcribedAt }, onPlay = { playingRow = i; vm.playFrom(turn.startMs) })
                 }
             }
@@ -385,8 +414,18 @@ private fun FollowUpChip(text: String) {
 }
 
 @Composable
-private fun TurnItem(turn: Turn, names: SpeakerNames, active: Boolean, clockWidth: Dp, onSpeaker: () -> Unit, onPlay: () -> Unit) {
+private fun TurnItem(
+    turn: Turn, names: SpeakerNames, active: Boolean, clockWidth: Dp, highlight: String?, onSpeaker: () -> Unit, onPlay: () -> Unit,
+) {
     val c = MaterialTheme.colorScheme
+    // The text searched for; the row being played is already secondaryContainer, so its marks take another colour.
+    // On the playing row (already secondaryContainer) a container tone wouldn't show: use the strong tertiary.
+    // SemiBold too, so the highlight doesn't rest on colour alone.
+    val mark = if (active) SpanStyle(color = c.onTertiary, background = c.tertiary, fontWeight = FontWeight.SemiBold)
+        else SpanStyle(color = c.onSecondaryContainer, background = c.secondaryContainer, fontWeight = FontWeight.SemiBold)
+    val text = remember(turn.text, highlight, mark) {
+        highlighted(turn.text, highlight?.let { SearchMatch.occurrences(turn.text, it) }.orEmpty(), mark)
+    }
     // The whole row plays from its time, so a one-word line is as easy to tap as a long one; the
     // speaker's name inside it keeps its own tap, whose 2dp padding counts towards the row's top padding.
     Row(
@@ -411,7 +450,7 @@ private fun TurnItem(turn: Turn, names: SpeakerNames, active: Boolean, clockWidt
                 if (active) Icon(AppIcons.Playing, contentDescription = "Playing", tint = c.primary,
                     modifier = Modifier.padding(start = 8.dp).size(16.dp))
             }
-            Text(turn.text, style = MaterialTheme.typography.bodyMedium, color = c.onSurface)
+            Text(text, style = MaterialTheme.typography.bodyMedium, color = c.onSurface)
         }
     }
 }
