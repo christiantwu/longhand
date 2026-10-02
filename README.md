@@ -6,6 +6,8 @@
 
 <p align="center"><em>Get it in writing.</em></p>
 
+<p align="center"><a href="https://github.com/christiantwu/longhand/releases/latest"><b>Download the latest APK</b></a></p>
+
 Longhand turns your recorded phone calls into transcripts you can read, search and share:
 who said what, when, and a short summary of what was agreed. It's made for GrapheneOS,
 whose Phone app can record calls, and it does all its work on the phone. There's no account
@@ -57,8 +59,9 @@ and no server, and nothing is uploaded.
 
 ## Install
 
-Download the APK from [Releases](https://github.com/christiantwu/longhand/releases). Release
-APKs are signed with this certificate (SHA-256):
+Download `longhand-<version>.apk` from the
+[latest release](https://github.com/christiantwu/longhand/releases/latest). Release APKs are
+signed with this certificate (SHA-256):
 
     10:33:66:AD:3D:78:A9:AC:CC:71:AC:03:41:B4:88:4F:6D:17:31:18:CF:7D:BA:7A:43:44:5C:CC:AF:07:6E:27
 
@@ -259,10 +262,12 @@ expose memory bugs in native code.
 2. Run `./gradlew assembleRelease` with the release key configured, and copy
    `app/build/outputs/apk/release/app-release.apk` to `dist/longhand-<version>.apk`.
 3. Run `scripts/fetch-sources.sh`. It downloads the source archives of the native libraries into
-   `dist/sources/` and checks their hashes.
-4. Push the tag and create the GitHub release from it, with the APK and everything in
-   `dist/sources/`. The prebuilt sherpa-onnx library contains eSpeak NG (GPL-3.0-or-later), whose
-   licence requires its source code to be offered alongside the binary. Put the signing
+   `dist/sources/` and checks their hashes. Bundle them into one file, so the APK stays easy to
+   find on the release page:
+   `tar -cf dist/longhand-<version>-native-sources.tar -C dist sources`.
+4. Push the tag and create the GitHub release from it, with the APK and the sources bundle. The
+   prebuilt sherpa-onnx library contains eSpeak NG (GPL-3.0-or-later), whose licence requires its
+   source code to be offered alongside the binary. Put the signing
    certificate's SHA-256 fingerprint in the notes:
    `apksigner verify --print-certs dist/longhand-<version>.apk`.
 
