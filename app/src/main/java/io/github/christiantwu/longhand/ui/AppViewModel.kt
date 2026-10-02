@@ -257,6 +257,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Quick taps on one language after another are handled in order, so the last one wins. */
     private val languageLock = Mutex()
 
+    /** Setup's starting choice, from the phone's language: saved without downloading anything, like the English default. */
+    fun preselectLanguage(language: Models.Language) = viewModelScope.launch(Dispatchers.IO) { languageLock.withLock {
+        if (!settingsStore.current().languageChosen) settingsStore.setLanguage(language)
+    } }
+
     fun removeSummaryModel() = viewModelScope.launch(Dispatchers.IO) {
         Models.remove(getApplication(), Models.Set.SUMMARY)
         refreshTick.value++

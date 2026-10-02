@@ -28,6 +28,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -35,6 +36,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
@@ -96,6 +98,11 @@ fun SetupScreen(vm: AppViewModel, onDone: () -> Unit) {
             content = {
                 // The language rows sit on the card's colour, so lift them a tone to keep the rows and their gaps visible.
                 val c = MaterialTheme.colorScheme
+                // Start from the phone's language: a Swedish phone starts on 25 European languages, not English.
+                val phone = LocalConfiguration.current.locales[0].language
+                LaunchedEffect(settings?.languageChosen) {
+                    if (settings?.languageChosen == false) vm.preselectLanguage(Models.Language.forPhoneLanguage(phone))
+                }
                 MaterialTheme(colorScheme = c.copy(surfaceContainer = c.surfaceContainerHighest)) {
                     LanguageChoice(settings?.language ?: Models.Language.ENGLISH, vm, Modifier.padding(top = 8.dp))
                 }

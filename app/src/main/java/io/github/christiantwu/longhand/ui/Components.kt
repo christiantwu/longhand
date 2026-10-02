@@ -47,6 +47,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.graphics.vector.path
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
@@ -62,6 +63,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.christiantwu.longhand.R
 import io.github.christiantwu.longhand.engine.Models
 import io.github.christiantwu.longhand.work.Work
+import java.util.Locale
 
 // ---- Editorial pieces -------------------------------------------------------------------------
 
@@ -317,6 +319,14 @@ fun Notice(
 
 // ---- Language choice --------------------------------------------------------------------------
 
+/** How a language choice is named in Setup and Settings. */
+fun languageName(language: Models.Language): String = when (language) {
+    Models.Language.ENGLISH -> "English"
+    Models.Language.EUROPEAN -> "25 European languages"
+    Models.Language.CJK -> "Chinese, Japanese and Korean"
+    Models.Language.HINDI -> "Hindi"
+}
+
 /** The languages Parakeet TDT 0.6B v3 transcribes, as its model card lists them. */
 const val EUROPEAN_LANGUAGES = "Bulgarian, Croatian, Czech, Danish, Dutch, English, Estonian, Finnish, French, German, " +
     "Greek, Hungarian, Italian, Latvian, Lithuanian, Maltese, Polish, Portuguese, Romanian, Russian, Slovak, " +
@@ -338,7 +348,16 @@ fun LanguageChoice(language: Models.Language, vm: AppViewModel, modifier: Modifi
     )
     val chosenReady = states.getValue(language).installed
     val options = Models.Language.entries
+    // A phone set to a language the chosen model doesn't transcribe: most calls are probably in it.
+    val phone = LocalConfiguration.current.locales[0]
+    val forPhone = Models.Language.forPhoneLanguage(phone.language)
     Column(modifier, verticalArrangement = Arrangement.spacedBy(GroupGap)) {
+        if (forPhone != language && forPhone != Models.Language.ENGLISH) {
+            val name = phone.getDisplayLanguage(Locale.ENGLISH)
+            Text("Your phone is set to $name. To transcribe calls in $name, choose ${languageName(forPhone)}.",
+                style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.padding(start = 4.dp, end = 4.dp, bottom = 8.dp))
+        }
         options.forEachIndexed { i, option ->
             val selected = language == option
             val state = states.getValue(option)

@@ -193,7 +193,30 @@ object Models {
     }
 
     /** The transcription languages to choose from, each with the speech set it needs. */
-    enum class Language(val set: Set) { ENGLISH(Set.SPEECH), EUROPEAN(Set.MULTILINGUAL), CJK(Set.CJK), HINDI(Set.HINDI) }
+    enum class Language(val set: Set) {
+        ENGLISH(Set.SPEECH), EUROPEAN(Set.MULTILINGUAL), CJK(Set.CJK), HINDI(Set.HINDI);
+
+        companion object {
+            /** ISO 639-1 codes of Parakeet v3's 25 European languages. */
+            private val EUROPEAN_CODES = setOf(
+                "bg", "hr", "cs", "da", "nl", "en", "et", "fi", "fr", "de", "el", "hu", "it",
+                "lv", "lt", "mt", "pl", "pt", "ro", "ru", "sk", "sl", "es", "sv", "uk",
+            )
+
+            /**
+             * The language to start with on a phone set to [code] (ISO 639): English for English, else the
+             * model that covers the phone's language, else English. People mostly call in their phone's
+             * language, and the English model turns any other language into made-up English.
+             */
+            fun forPhoneLanguage(code: String): Language = when (code.lowercase()) {
+                "en" -> ENGLISH
+                in EUROPEAN_CODES -> EUROPEAN
+                "zh", "ja", "ko", "yue" -> CJK
+                "hi" -> HINDI
+                else -> ENGLISH
+            }
+        }
+    }
 
     // A getter: computed while Models initializes, it would read Language half-built when Language's
     // own initialization is what started it (Language → Set → SPEAKER_MODELS → Models).

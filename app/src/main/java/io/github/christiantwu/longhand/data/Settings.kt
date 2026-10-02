@@ -23,6 +23,8 @@ data class AppSettings(
     val phoneNoticeHidden: Boolean = false,
     /** The language calls are transcribed in, which decides the speech model kept on the phone. */
     val language: Models.Language = Models.Language.ENGLISH,
+    /** A language was ever chosen (or preselected at setup); until then [language] is only the default. */
+    val languageChosen: Boolean = false,
     /** Suggest the names of people the user has named when their voice is heard in another call. */
     val recogniseVoices: Boolean = false,
 )
@@ -67,6 +69,7 @@ class Settings(private val context: Context) {
             phoneNoticeHidden = p[Keys.phoneNoticeHidden] ?: false,
             language = Models.Language.entries.firstOrNull { it.name == p[Keys.language] }
                 ?: if (p[Keys.multilingual] == true) Models.Language.EUROPEAN else Models.Language.ENGLISH,
+            languageChosen = p[Keys.language] != null || p[Keys.multilingual] != null,
             recogniseVoices = p[Keys.recogniseVoices] ?: false,
         )
     }

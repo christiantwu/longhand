@@ -185,4 +185,15 @@ class ModelsTest {
             update.copy(downloading = true, waiting = "Waiting for Wi-Fi…").updateText)
         assertEquals("Update failed: HTTP 404", update.copy(error = "HTTP 404").updateText)
     }
+
+    @Test fun startsFromThePhonesLanguage() {
+        assertEquals(Models.Language.ENGLISH, Models.Language.forPhoneLanguage("en"))
+        assertEquals(Models.Language.EUROPEAN, Models.Language.forPhoneLanguage("sv"))
+        assertEquals(Models.Language.EUROPEAN, Models.Language.forPhoneLanguage("DE"))
+        assertEquals(Models.Language.CJK, Models.Language.forPhoneLanguage("ja"))
+        assertEquals(Models.Language.HINDI, Models.Language.forPhoneLanguage("hi"))
+        // Not covered by any model (Norwegian, Arabic): English, as before.
+        assertEquals(Models.Language.ENGLISH, Models.Language.forPhoneLanguage("nb"))
+        assertEquals(Models.Language.ENGLISH, Models.Language.forPhoneLanguage("ar"))
+    }
 }
