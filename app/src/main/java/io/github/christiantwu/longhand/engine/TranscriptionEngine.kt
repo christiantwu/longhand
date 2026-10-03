@@ -148,10 +148,10 @@ class TranscriptionEngine(context: Context, speech: Models.Set) : Closeable {
                 val to = (span.end * SR).toInt().coerceIn(from, samples.size)
                 if (to - from >= MIN_PIECE_SAMPLES) span to samples.copyOfRange(from, to) else null
             }
-            val texts = streaming?.recognize(clips.map { it.second }, isStopped, step) ?: clips.map { recognize(it.second) }
-            clips.zip(texts) { (span, _), text ->
-                if (text.isNotBlank()) {
-                    lines += TranscriptLine((span.start * 1000).toLong(), (span.end * 1000).toLong(), span.speaker, text)
+            val results = streaming?.recognize(clips.map { it.second }, isStopped, step) ?: clips.map { recognize(it.second) }
+            clips.zip(results) { (span, _), result ->
+                if (result.text.isNotBlank()) {
+                    lines += TranscriptLine((span.start * 1000).toLong(), (span.end * 1000).toLong(), span.speaker, result.text, result.words)
                 }
             }
             done += group.size
@@ -220,13 +220,23 @@ class TranscriptionEngine(context: Context, speech: Models.Set) : Closeable {
         return SegmentLogic.splitAtPauses(turn.start, turn.end, pauses, MAX_PIECE_SEC)
     }
 
-    private fun recognize(samples: FloatArray): String {
+    /** The piece's text, with when each word was said (from the tokens' times, and their durations for Parakeet). */
+    private fun recognize(samples: FloatArray): Recognized {
         val recognizer = checkNotNull(recognizer)
         val stream = recognizer.createStream()
         try {
             stream.acceptWaveform(samples, MODEL_SAMPLE_RATE)
             recognizer.decode(stream)
-            return SegmentLogic.cleanText(recognizer.getResult(stream).text)
+            val result = recognizer.getResult(stream)
+            val text = SegmentLogic.cleanText(result.text)
+            val words = try {
+                WordTimings.fromTokens(text, result.tokens, result.timestamps, result.durations, lead = 0f, length = samples.size / SR)
+            } catch (e: Exception) {
+                // Only needed for splitting a line by hand later; the transcript doesn't depend on it.
+                Log.w(TAG, "no word timings: ${e.message}")
+                null
+            }
+            return Recognized(text, words)
         } finally {
             stream.release()
         }

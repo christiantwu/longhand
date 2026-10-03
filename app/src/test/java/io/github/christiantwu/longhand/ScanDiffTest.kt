@@ -45,6 +45,16 @@ class ScanDiffTest {
         assertTrue(plan.changed.all { it.second.size == 20L })
     }
 
+    @Test fun aCallEditedByHandIsntRequeuedWhenItsFileChanges() {
+        // A new transcript would replace the edits without asking; only the file details are updated.
+        val edited = rec(1, "edited", 10, now - 200_000, RecordingStatus.DONE).copy(editedAt = now - 300_000)
+        val plain = rec(2, "plain", 10, now - 200_000, RecordingStatus.DONE)
+        val listed = listOf(edited, plain).map { ListedFile(it.documentUri, it.documentUri, 20, now - 100_000) }
+        val plan = ScanDiff.plan(listOf(edited, plain), listed, now)
+        assertEquals(listOf(2L), plan.requeueIds)
+        assertEquals(listOf(1L, 2L), plan.changed.map { it.first })
+    }
+
     @Test fun skipsRecordingsOlderThanSetupCutoff() {
         val old = ListedFile("a", "a.mp3", 10, 1_000)
         val new = ListedFile("b", "b.mp3", 10, 5_000)

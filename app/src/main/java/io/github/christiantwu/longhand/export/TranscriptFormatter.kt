@@ -6,8 +6,8 @@ import io.github.christiantwu.longhand.engine.SegmentLogic
 import java.text.DateFormat
 import java.util.Date
 
-/** Consecutive lines from the same speaker, shown and exported as one paragraph. */
-data class Turn(val startMs: Long, val speaker: Int, val text: String, val endMs: Long = startMs)
+/** Consecutive lines from the same speaker, shown and exported as one paragraph; [segmentIds] are those lines, in order. */
+data class Turn(val startMs: Long, val speaker: Int, val text: String, val endMs: Long = startMs, val segmentIds: List<Long> = emptyList())
 
 /**
  * How the speakers in one transcript are named. A name typed by hand always wins; then the
@@ -82,25 +82,28 @@ object TranscriptFormatter {
     fun turns(segments: List<Segment>): List<Turn> {
         val out = ArrayList<Turn>()
         val lastEnd = HashMap<Int, Long>() // each speaker's latest end so far
-        for (s in segments.sortedBy { it.startMs }) {
+        for (s in inOrder(segments)) {
             val last = out.lastOrNull()
             val othersEnd = lastEnd.filterKeys { it != s.speaker }.values.maxOrNull() ?: 0L
             val join = last != null && last.speaker == s.speaker && s.startMs - last.endMs <= JOIN_GAP_MS &&
                 // Someone else still talking after this turn ended means they spoke in between
                 // (a little overlap from the padding around speech doesn't count).
                 minOf(othersEnd, s.startMs) - last.endMs <= OVERLAP_SLACK_MS
-            if (join) out[out.lastIndex] = last!!.copy(text = join(last.text, s.text), endMs = maxOf(last.endMs, s.endMs))
-            else out += Turn(s.startMs, s.speaker, s.text, s.endMs)
+            if (join) out[out.lastIndex] = last!!.copy(text = join(last.text, s.text), endMs = maxOf(last.endMs, s.endMs), segmentIds = last.segmentIds + s.id)
+            else out += Turn(s.startMs, s.speaker, s.text, s.endMs, listOf(s.id))
             lastEnd[s.speaker] = maxOf(lastEnd[s.speaker] ?: 0L, s.endMs)
         }
         return out
     }
 
+    /** Lines in the order turns are made from them: by start, then as stored (a line split by hand comes after its first part). */
+    fun inOrder(segments: List<Segment>): List<Segment> = segments.sortedWith(compareBy({ it.startMs }, { it.id }))
+
     /**
      * Two pieces of one turn as one text. Chinese and Japanese put no spaces between words or around
      * their own punctuation; Korean and the rest get a space.
      */
-    private fun join(a: String, b: String): String {
+    fun join(a: String, b: String): String {
         if (a.isEmpty() || b.isEmpty()) return a + b
         val end = a.codePointBefore(a.length)
         val start = b.codePointAt(0)
@@ -131,7 +134,9 @@ object TranscriptFormatter {
         formatNumber: (String) -> String = { it },
     ): String = buildString {
         val date = DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(rec.lastModified))
-        val meta = listOfNotNull(CallText.direction(rec), date, SegmentLogic.formatDuration(rec.durationMs)).joinToString(" · ")
+        // Changed by hand, so no longer just what the recogniser heard.
+        val edited = if (rec.editedAt != null) "Edited" else null
+        val meta = listOfNotNull(CallText.direction(rec), date, SegmentLogic.formatDuration(rec.durationMs), edited).joinToString(" · ")
         val title = CallText.sentence(rec, formatNumber)
         if (markdown) append("# ").append(title).append("\n\n*").append(meta).append("*\n\n")
         else append(title).append("\n").append(meta).append("\n\n")

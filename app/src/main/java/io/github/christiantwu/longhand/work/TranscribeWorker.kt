@@ -20,6 +20,7 @@ import io.github.christiantwu.longhand.engine.Summarizer
 import io.github.christiantwu.longhand.engine.TranscriptionEngine
 import io.github.christiantwu.longhand.engine.VoiceMath
 import io.github.christiantwu.longhand.engine.VoiceProfile
+import io.github.christiantwu.longhand.engine.WordTimings
 import io.github.christiantwu.longhand.export.CallText
 import io.github.christiantwu.longhand.export.SpeakerNames
 import io.github.christiantwu.longhand.export.TranscriptFormatter
@@ -198,9 +199,15 @@ class TranscribeWorker(context: Context, params: WorkerParameters) : CoroutineWo
             )
             val owner = profile?.let { VoiceMath.pickOwner(it, result.voices) }
             val elapsed = SystemClock.elapsedRealtime() - started
-            dao.saveTranscript(
+            // What the recogniser wrote, with its word timings: common corrections are applied as it's saved, with the
+            // rules there are then, and the recogniser's text is kept, so a rule removed later is undone. The summary,
+            // written after, sees the corrected text.
+            val saved = dao.saveTranscript(
                 id = rec.id,
-                segments = result.lines.map { Segment(recordingId = rec.id, startMs = it.startMs, endMs = it.endMs, speaker = it.speaker, text = it.text) },
+                segments = result.lines.map {
+                    Segment(recordingId = rec.id, startMs = it.startMs, endMs = it.endMs, speaker = it.speaker, text = it.text,
+                        words = it.words?.let(WordTimings::encode))
+                },
                 voices = result.voices.toSpeakerVoices(rec.id),
                 durationMs = audio.durationMs,
                 processingMs = elapsed,
@@ -208,6 +215,12 @@ class TranscribeWorker(context: Context, params: WorkerParameters) : CoroutineWo
                 summarize = summarize,
                 redo = redo,
             )
+            if (!saved) {
+                // Deleted meanwhile, or (a redo) edited by hand while it ran: the edits stay, and the redo isn't counted.
+                if (redo) dao.interruptRedo(rec.id)
+                Log.i(TAG, "${rec.displayName} wasn't saved: ${if (redo) "edited or deleted" else "deleted"} meanwhile")
+                return false
+            }
             Log.i(TAG, "${if (redo) "redone" else "done"} ${rec.displayName}: ${result.lines.size} lines, ${result.voices.size} voices, owner=$owner, " +
                 "audio ${audio.durationMs} ms, took $elapsed ms (RTF %.2f)".format(elapsed.toDouble() / audio.durationMs.coerceAtLeast(1)))
             true

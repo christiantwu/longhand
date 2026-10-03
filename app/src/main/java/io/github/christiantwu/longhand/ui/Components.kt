@@ -243,11 +243,15 @@ fun OutlinedPillButton(text: String, onClick: () -> Unit, modifier: Modifier = M
 
 /** A text button in the primary colour, for secondary choices next to body text. */
 @Composable
-fun TextAction(text: String, onClick: () -> Unit, modifier: Modifier = Modifier, color: Color = MaterialTheme.colorScheme.primary) {
-    TextButton(onClick = onClick, modifier = modifier, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)) {
+fun TextAction(
+    text: String, onClick: () -> Unit, modifier: Modifier = Modifier, color: Color = MaterialTheme.colorScheme.primary,
+    enabled: Boolean = true,
+) {
+    TextButton(onClick = onClick, modifier = modifier, enabled = enabled, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)) {
         // TextButton is at least 58 dp wide and centres anything shorter, which pushes short labels out
         // of line with the actions above them. Filling that minimum keeps them flush left.
-        Text(text, style = MaterialTheme.typography.labelLarge, color = color,
+        Text(text, style = MaterialTheme.typography.labelLarge,
+            color = if (enabled) color else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
             modifier = Modifier.widthIn(min = ButtonDefaults.MinWidth - 24.dp))
     }
 }

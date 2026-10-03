@@ -48,12 +48,13 @@ import io.github.christiantwu.longhand.data.FolderScanner
 import io.github.christiantwu.longhand.engine.Models
 
 @Composable
-fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit, onLicences: () -> Unit) {
+fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit, onCorrections: () -> Unit, onLicences: () -> Unit) {
     val context = LocalContext.current
     val settings by vm.settings.collectAsStateWithLifecycle()
     val summary by vm.summaryModel.collectAsStateWithLifecycle()
     val device by vm.deviceState.collectAsStateWithLifecycle()
     val known by vm.knownVoices.collectAsStateWithLifecycle()
+    val corrections by vm.corrections.collectAsStateWithLifecycle()
     var confirmForgetVoices by remember { mutableStateOf(false) }
     val s = settings ?: return
 
@@ -123,6 +124,15 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit, onLicences: () -> Unit)
                                 Modifier.semantics { contentDescription = "Forget ${voice.name}" })
                         }
                     }
+                }
+            }
+
+            Section("Corrections") {
+                GroupRow(groupShape(0, 1), onClick = onCorrections, onClickLabel = "Open", minHeight = 72.dp) {
+                    RowText("Common corrections",
+                        if (corrections.isEmpty()) "Fix words the recogniser gets wrong, like a name."
+                        else "${corrections.size} ${if (corrections.size == 1) "correction" else "corrections"}")
+                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
 

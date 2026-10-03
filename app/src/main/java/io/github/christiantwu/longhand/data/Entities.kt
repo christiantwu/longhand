@@ -5,6 +5,7 @@ import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import io.github.christiantwu.longhand.engine.Corrections
 
 enum class RecordingStatus { PENDING, PROCESSING, DONE, FAILED, SKIPPED }
 
@@ -59,6 +60,8 @@ data class Recording(
     @ColumnInfo(defaultValue = "1") val pipeline: Int = 0,
     /** The "call transcribed" notification has gone out, or isn't wanted (a redo of an old transcript). */
     @ColumnInfo(defaultValue = "1") val announced: Boolean = true,
+    /** When the transcript was last changed by hand (a line's text or speaker); null if never. */
+    val editedAt: Long? = null,
 )
 
 /** Versions of the transcription pipeline. Transcripts made by an older one are redone on the charger. */
@@ -79,6 +82,15 @@ data class Segment(
     val endMs: Long,
     val speaker: Int,
     val text: String,
+    /**
+     * Each recognised word's start and end, in centiseconds from [startMs], in the order the recogniser
+     * wrote the words; null when they weren't kept (transcripts made before 0.9.0).
+     */
+    val words: String? = null,
+    /** What the recogniser wrote, before common corrections or a hand edit; null when it's [text]. */
+    val recognized: String? = null,
+    /** The text was typed by hand, so common corrections leave it alone. */
+    @ColumnInfo(defaultValue = "0") val edited: Boolean = false,
 )
 
 @Entity(
@@ -132,3 +144,28 @@ data class VoiceSample(val recordingId: Long, val speaker: Int, val voiceId: Lon
     indices = [Index("voiceId")],
 )
 data class VoiceRejection(val recordingId: Long, val speaker: Int, val voiceId: Long)
+
+/** A common correction: [written] wherever the recogniser writes [heard] (engine.Corrections does the matching). */
+@Entity(tableName = "corrections", indices = [Index(value = ["heardKey"], unique = true)])
+data class Correction(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    /** As typed, trimmed and with single spaces ([Corrections.normalize]). */
+    val heard: String,
+    /** [Corrections.keyOf] [heard]: one rule per word or phrase, whatever its case or spacing. */
+    val heardKey: String,
+    val written: String,
+    val createdAt: Long,
+)
+
+/** The rules to apply, as the matcher takes them. */
+fun List<Correction>.toCorrections(): Corrections = Corrections(map { Corrections.Rule(it.heard, it.written) })
+
+/**
+ * This line with common corrections [rules] applied afresh to what the recogniser wrote (so a rule removed since is
+ * undone), unless it was typed by hand. Its word timings belong to what the recogniser wrote, which doesn't change.
+ */
+fun Segment.corrected(rules: Corrections): Segment {
+    if (edited) return this
+    val (corrected, source) = rules.correct(recognized ?: text)
+    return copy(text = corrected, recognized = source)
+}

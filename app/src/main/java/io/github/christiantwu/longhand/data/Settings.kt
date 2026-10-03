@@ -27,6 +27,8 @@ data class AppSettings(
     val languageChosen: Boolean = false,
     /** Suggest the names of people the user has named when their voice is heard in another call. */
     val recogniseVoices: Boolean = false,
+    /** The transcript's tip about long-pressing a line was dismissed, or a line's menu was opened. */
+    val editTipSeen: Boolean = false,
 )
 
 private val Context.dataStore by preferencesDataStore("settings")
@@ -42,6 +44,7 @@ class Settings(private val context: Context) {
         /** 0.6.0, before the third language: true meant the 25 European languages. */
         val multilingual = booleanPreferencesKey("multilingual")
         val recogniseVoices = booleanPreferencesKey("recognise_voices")
+        val editTipSeen = booleanPreferencesKey("edit_tip_seen")
     }
 
     val flow: Flow<AppSettings> = context.dataStore.data.map(::from)
@@ -59,6 +62,7 @@ class Settings(private val context: Context) {
     suspend fun setPhoneNoticeHidden(v: Boolean) = set(Keys.phoneNoticeHidden, v)
     suspend fun setLanguage(v: Models.Language) = set(Keys.language, v.name)
     suspend fun setRecogniseVoices(v: Boolean) = set(Keys.recogniseVoices, v)
+    suspend fun setEditTipSeen(v: Boolean) = set(Keys.editTipSeen, v)
 
     companion object {
         fun from(p: Preferences) = AppSettings(
@@ -71,6 +75,7 @@ class Settings(private val context: Context) {
                 ?: if (p[Keys.multilingual] == true) Models.Language.EUROPEAN else Models.Language.ENGLISH,
             languageChosen = p[Keys.language] != null || p[Keys.multilingual] != null,
             recogniseVoices = p[Keys.recogniseVoices] ?: false,
+            editTipSeen = p[Keys.editTipSeen] ?: false,
         )
     }
 }

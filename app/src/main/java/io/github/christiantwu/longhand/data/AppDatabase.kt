@@ -10,20 +10,21 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 @Database(
     entities = [
         Recording::class, Segment::class, SpeakerName::class, SpeakerVoice::class,
-        KnownVoice::class, VoiceSample::class, VoiceRejection::class,
+        KnownVoice::class, VoiceSample::class, VoiceRejection::class, Correction::class,
     ],
-    version = 3,
+    version = 4,
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun recordings(): RecordingDao
     abstract fun voices(): VoiceDao
+    abstract fun corrections(): CorrectionDao
 
     companion object {
         @Volatile private var instance: AppDatabase? = null
 
         fun get(context: Context): AppDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, "transcripts.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
                 .build().also { instance = it }
         }
 
@@ -69,6 +70,26 @@ abstract class AppDatabase : RoomDatabase() {
                         "FOREIGN KEY(`voiceId`) REFERENCES `known_voices`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )"
                 )
                 db.execSQL("CREATE INDEX IF NOT EXISTS `index_voice_rejections_voiceId` ON `voice_rejections` (`voiceId`)")
+            }
+        }
+
+        /**
+         * 4 (0.9.0): common corrections and editing transcripts. Each line may keep its words' timings
+         * (for splitting it), what the recogniser wrote before corrections or a hand edit, and whether it
+         * was typed by hand; a call notes when it was last changed by hand; and the corrections themselves.
+         * Earlier lines have none of these: their text is as recognised, never edited, without timings.
+         */
+        val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `segments` ADD COLUMN `words` TEXT")
+                db.execSQL("ALTER TABLE `segments` ADD COLUMN `recognized` TEXT")
+                db.execSQL("ALTER TABLE `segments` ADD COLUMN `edited` INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE `recordings` ADD COLUMN `editedAt` INTEGER")
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `corrections` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `heard` TEXT NOT NULL, " +
+                        "`heardKey` TEXT NOT NULL, `written` TEXT NOT NULL, `createdAt` INTEGER NOT NULL)"
+                )
+                db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_corrections_heardKey` ON `corrections` (`heardKey`)")
             }
         }
     }

@@ -5,6 +5,7 @@ import android.util.Log
 import com.k2fsa.sherpa.onnx.OnlineModelConfig
 import com.k2fsa.sherpa.onnx.OnlineRecognizer
 import com.k2fsa.sherpa.onnx.OnlineRecognizerConfig
+import com.k2fsa.sherpa.onnx.OnlineRecognizerResult
 import com.k2fsa.sherpa.onnx.OnlineStream
 import com.k2fsa.sherpa.onnx.OnlineTransducerModelConfig
 import io.github.christiantwu.longhand.TAG
@@ -41,22 +42,33 @@ class StreamingRecognizer(context: Context, speech: Models.Set, threads: Int) : 
     )
 
     /**
-     * The text of each of [clips] (16 kHz audio), cleaned up as the other models' is. The model detects the language of
-     * each piece, which keeps turns spoken in English in Latin letters; a piece it writes in another script (some short
-     * ones come out in Cyrillic, say) is decoded again as Hindi.
+     * The text of each of [clips] (16 kHz audio), cleaned up as the other models' is, with its word timings. The model
+     * detects the language of each piece, which keeps turns spoken in English in Latin letters; a piece it writes in
+     * another script (some short ones come out in Cyrillic, say) is decoded again as Hindi.
      * @param isStopped polled between decoding steps; throws [CancellationException] when true.
      * @param onStep called after each decoding step.
      */
-    fun recognize(clips: List<FloatArray>, isStopped: () -> Boolean, onStep: () -> Unit = {}): List<String> {
-        val texts = decode(clips, AUTO, isStopped, onStep).toMutableList()
-        val again = texts.indices.filter { Scripts.hasOtherScript(texts[it]) }
+    fun recognize(clips: List<FloatArray>, isStopped: () -> Boolean, onStep: () -> Unit = {}): List<Recognized> {
+        val results = decode(clips, AUTO, isStopped, onStep).toMutableList()
+        val again = results.indices.filter { Scripts.hasOtherScript(results[it].text) }
         if (again.isNotEmpty()) {
-            decode(again.map { clips[it] }, HINDI, isStopped, onStep).forEachIndexed { k, text -> texts[again[k]] = text }
+            decode(again.map { clips[it] }, HINDI, isStopped, onStep).forEachIndexed { k, result -> results[again[k]] = result }
         }
-        return texts.map(SegmentLogic::cleanText)
+        return results.mapIndexed { i, result ->
+            val text = SegmentLogic.cleanText(result.text)
+            // Each token's time, from the start of the stream: the silence put before the piece is taken off.
+            val words = try {
+                WordTimings.fromTokens(text, result.tokens, result.timestamps, durations = null,
+                    lead = LEAD_PADDING.size.toFloat() / MODEL_SAMPLE_RATE, length = clips[i].size.toFloat() / MODEL_SAMPLE_RATE)
+            } catch (e: Exception) {
+                Log.w(TAG, "no word timings: ${e.message}")
+                null
+            }
+            Recognized(text, words)
+        }
     }
 
-    private fun decode(clips: List<FloatArray>, language: String, isStopped: () -> Boolean, onStep: () -> Unit): List<String> {
+    private fun decode(clips: List<FloatArray>, language: String, isStopped: () -> Boolean, onStep: () -> Unit): List<OnlineRecognizerResult> {
         val streams = ArrayList<OnlineStream>(clips.size)
         try {
             for (samples in clips) {
@@ -76,7 +88,7 @@ class StreamingRecognizer(context: Context, speech: Models.Set, threads: Int) : 
                 if (ready.size == 1 || !OnlineBatch.decode(recognizer, ready)) ready.forEach { recognizer.decode(it) }
                 onStep()
             }
-            return streams.map { recognizer.getResult(it).text }
+            return streams.map { recognizer.getResult(it) }
         } finally {
             streams.forEach { it.release() }
         }

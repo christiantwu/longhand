@@ -30,6 +30,8 @@ and no server, and nothing is uploaded.
 - **Summarizes each call** with a topic line, a short summary and any follow-ups, written
   by a small language model on the phone. Summaries are optional.
 - **Plays any line.** Tap a line to hear that moment of the recording.
+- **Fix what it got wrong.** Long-press a line to edit it, split it, or give it to someone
+  else, and add common corrections, like “UV” → “Youvee”, for every new transcript.
 - **Search and share.** Search by name, topic or words. Share a transcript as text or
   Markdown, or share the recording itself.
 - **Languages:** English, 25 European languages, Chinese, Japanese and Korean, or Hindi (with
@@ -165,7 +167,21 @@ tests of the model, recognition took about 1.8 times as long as the European lan
          Kotlin API leaves out that batched decoding, so `libonline-batch.so`
          (`app/src/main/cpp/online_batch.c`) calls it in sherpa-onnx's native library. The model
          detects the language of each piece; a piece it writes in a script other than Devanagari or
-         Latin (some short ones come out in Cyrillic) is decoded again as Hindi.
+         Latin (some short ones come out in Cyrillic) is decoded again as Hindi. When each word was
+         said is kept too (from sherpa-onnx's token times, and Parakeet's token durations), so a line
+         can later be split between two words.
+      6. Apply common corrections (Settings → Corrections), such as "UV" → "Youvee"
+         (`engine/Corrections.kt`): whole words or phrases, in any case, longest phrase first, in
+         one pass. Chinese and Japanese, written without spaces, match anywhere. Whole words can't
+         tell meanings apart, so a rule for "UV" changes "UV index" too. The rules are read in the
+         same transaction that saves the transcript. The recogniser's own text is kept, so removing
+         a rule puts it back (the message that follows offers Undo), and the calls it changed get
+         their summaries written again. A new rule can also correct earlier calls
+         (`CorrectionsWorker`), replacing its words in their topic, summary and follow-ups without
+         summarizing again.
+         sherpa-onnx's hotwords, which bias decoding toward given words, were tried instead: on
+         synthetic calls they never fixed "UV" below a boost that garbled other sentences, they
+         need the slower beam search, and SenseVoice can't use them.
 
       Each speaker's voice fingerprint is stored, made from speech nobody talks over. If a
       stereo recording has each person on
@@ -194,6 +210,24 @@ tests of the model, recognition took about 1.8 times as long as the European lan
    people at most 0.53.
 4. Transcripts are stored in Room (app-private storage), and shared or saved as `.md` or `.txt`.
    Tap a line to play the audio from that point.
+   **Editing:** long-press a line (or use TalkBack's actions) for **Edit text**, **Split line…**,
+   **Someone else said this…** and **Copy**; tapping a speaker's name also offers **Same person as…**,
+   for when speaker separation heard one person as two. An edited line keeps what the recogniser
+   wrote, and common corrections leave it alone. A split falls halfway between the end of one word
+   and the start of the next (`engine/TranscriptEdits.kt`); on synthetic calls that was within
+   140 ms of the real change of speaker even with no pause, against up to 0.4 s for transcripts made
+   before word timings were kept, which are split in proportion to the characters. Each change can be
+   undone from the message that follows it, and after an edit that replaced one short phrase (say
+   "UV" with "Youvee") Longhand offers to make it a common correction. The offer is for what the
+   recogniser wrote there, so changing a word a rule wrote offers to replace that rule, and it's
+   never made for fewer than three Chinese or Japanese characters, which would match inside other
+   words. A call changed by hand says "Edited" in its header and exports, and its summary is queued
+   to be written again when you leave it (on the charger, if you've chosen that). After a change of
+   speakers, `VoiceRefreshWorker` works out the call's voice fingerprints again, so "You" and
+   Recognise voices follow; choosing **Me** before it has finished works the voice out from the
+   lines as they are. Redos for a pipeline update skip edited calls (one edited while it ran is
+   dropped), and so does the folder check when an edited call's file changes; **Transcribe again**
+   warns that the edits will be replaced.
    **Search** looks through the caller's name and number, the file name, the topic, summary and
    follow-ups, every line of the transcript, and the names given to speakers (including those
    confirmed through Recognise voices). What you type is matched literally, so `50%` finds "50%".

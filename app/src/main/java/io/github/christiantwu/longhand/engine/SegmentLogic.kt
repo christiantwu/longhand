@@ -5,8 +5,8 @@ data class Span(val start: Float, val end: Float, val speaker: Int) {
     val duration: Float get() = end - start
 }
 
-/** One transcribed line, as stored and displayed. */
-data class TranscriptLine(val startMs: Long, val endMs: Long, val speaker: Int, val text: String)
+/** One transcribed line, as stored and displayed, with when each of its words was said if the recogniser told. */
+data class TranscriptLine(val startMs: Long, val endMs: Long, val speaker: Int, val text: String, val words: List<WordTime>? = null)
 
 object SegmentLogic {
 

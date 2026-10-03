@@ -15,4 +15,9 @@ class SettingsTest {
         assertFalse(Settings.from(emptyPreferences()).recogniseVoices)
         assertTrue(Settings.from(preferencesOf(booleanPreferencesKey("recognise_voices") to true)).recogniseVoices)
     }
+
+    @Test fun theLongPressTipShowsUntilSeen() {
+        assertFalse(Settings.from(emptyPreferences()).editTipSeen)
+        assertTrue(Settings.from(preferencesOf(booleanPreferencesKey("edit_tip_seen") to true)).editTipSeen)
+    }
 }

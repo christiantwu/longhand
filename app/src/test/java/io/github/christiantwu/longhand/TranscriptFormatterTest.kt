@@ -28,6 +28,27 @@ class TranscriptFormatterTest {
         assertEquals(83_000L, turns[1].startMs)
     }
 
+    @Test fun turnsKnowTheirLinesInOrder() {
+        val lines = listOf(
+            Segment(id = 9, recordingId = 1, startMs = 3500, endMs = 6000, speaker = 0, text = "Calling about the roof."),
+            Segment(id = 8, recordingId = 1, startMs = 83_000, endMs = 85_000, speaker = 1, text = "Great, thanks."),
+            Segment(id = 7, recordingId = 1, startMs = 0, endMs = 3000, speaker = 0, text = "Hi there."),
+            // Lines that start together are taken in the order they were stored (a line split by hand, say).
+            Segment(id = 12, recordingId = 1, startMs = 85_000, endMs = 86_000, speaker = 0, text = "Bye."),
+            Segment(id = 11, recordingId = 1, startMs = 85_000, endMs = 85_000, speaker = 1, text = "Okay."),
+        )
+        val turns = TranscriptFormatter.turns(lines)
+        assertEquals(listOf(listOf(7L, 9L), listOf(8L, 11L), listOf(12L)), turns.map { it.segmentIds })
+        assertEquals("Great, thanks. Okay.", turns[1].text)
+    }
+
+    @Test fun exportsSayWhenACallWasEditedByHand() {
+        val meta = { r: Recording -> TranscriptFormatter.format(r, segments, SpeakerNames(), markdown = false).lines()[1] }
+        assertTrue(meta(rec.copy(editedAt = 1L)).endsWith(" · Edited"))
+        assertTrue(!meta(rec).contains("Edited"))
+        assertTrue(TranscriptFormatter.format(rec.copy(editedAt = 1L), segments, SpeakerNames(), markdown = true).contains(" · Edited*"))
+    }
+
     @Test fun aLaterLineOfTheSameSpeakerKeepsItsOwnTime() {
         // The other person's short "Sure." overlaps the start of the owner's question; their reply
         // comes 4 s later. The reply must not join the "Sure." under its time, or tapping it plays

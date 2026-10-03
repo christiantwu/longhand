@@ -15,8 +15,12 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import io.github.christiantwu.longhand.LonghandApp
 import io.github.christiantwu.longhand.TAG
 import io.github.christiantwu.longhand.data.AppDatabase
+import io.github.christiantwu.longhand.data.CallSnapshot
+import io.github.christiantwu.longhand.data.Correction
+import io.github.christiantwu.longhand.data.toCorrections
 import io.github.christiantwu.longhand.data.Pipeline
 import io.github.christiantwu.longhand.data.CallerLookup
 import io.github.christiantwu.longhand.data.KnownVoiceRow
@@ -25,19 +29,24 @@ import io.github.christiantwu.longhand.data.Segment
 import io.github.christiantwu.longhand.data.Settings
 import io.github.christiantwu.longhand.data.SpeakerName
 import io.github.christiantwu.longhand.data.SummaryStatus
+import io.github.christiantwu.longhand.engine.Corrections
 import io.github.christiantwu.longhand.engine.Models
+import io.github.christiantwu.longhand.engine.TranscriptEdits
 import io.github.christiantwu.longhand.engine.VoiceAnalyzer
 import io.github.christiantwu.longhand.engine.VoiceMath
 import io.github.christiantwu.longhand.engine.VoiceProfile
 import io.github.christiantwu.longhand.export.CallText
 import io.github.christiantwu.longhand.export.SpeakerNames
 import io.github.christiantwu.longhand.export.TranscriptFormatter
+import io.github.christiantwu.longhand.export.Turn
+import io.github.christiantwu.longhand.work.CommonCorrections
 import io.github.christiantwu.longhand.work.Work
 import io.github.christiantwu.longhand.work.learnVoicesFromAudio
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -49,13 +58,34 @@ import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.util.concurrent.CancellationException
 
 data class PlaybackState(val playing: Boolean = false, val positionMs: Long = 0, val error: String? = null)
+
+/** Who a line, or part of one, is given to by hand: someone already in the call, or someone new. Kept across a rotation. */
+sealed interface SpeakerTarget : java.io.Serializable {
+    data class Existing(val speaker: Int) : SpeakerTarget
+    /** The phone's owner, in a call where nobody is labelled You yet: a new speaker, set as the owner by hand. */
+    data object Me : SpeakerTarget
+    /** The caller, when nobody is shown with their name: a new speaker given it. */
+    data class Caller(val name: String) : SpeakerTarget
+    /** Someone not heard in the call before, shown as "Speaker N". */
+    data object New : SpeakerTarget
+}
+
+/**
+ * What the transcript says after a change by hand: [message], with Undo when [token] is set, then perhaps "Always write
+ * “Youvee” for “UV”?" ([suggestion]: what was heard, and how it was written instead). A null [message] takes down
+ * whatever is showing: the change can't be undone any more.
+ */
+class EditNotice(val message: String?, val token: Long? = null, val suggestion: Pair<String, String>? = null)
 
 /** "Recognise voices": a known voice suggested for a speaker, and how many calls it was learned from. */
 data class VoiceSuggestion(val voiceId: Long, val name: String, val calls: Int)
@@ -103,6 +133,7 @@ class TranscriptViewModel(app: Application, savedState: SavedStateHandle) : Andr
     val highlight: String? = savedState.get<String>("q")?.trim()?.ifEmpty { null }
     private val dao = AppDatabase.get(app).recordings()
     private val voiceDao = AppDatabase.get(app).voices()
+    private val correctionDao = AppDatabase.get(app).corrections()
     private val settingsStore = Settings(app)
     private val format: (String) -> String = CallerLookup::formatNumber
 
@@ -216,6 +247,7 @@ class TranscriptViewModel(app: Application, savedState: SavedStateHandle) : Andr
      */
     fun speakerIsMe(speaker: Int, transcript: Long?) = viewModelScope.launch(Dispatchers.IO) {
         if (!stillShowing(transcript)) return@launch
+        forgetUndo()
         dao.setOwnerByHand(id, speaker)
         dao.deleteSpeakerName(id, speaker)
         // The owner's voice is learned into their own voiceprint, not as a known voice.
@@ -223,7 +255,11 @@ class TranscriptViewModel(app: Application, savedState: SavedStateHandle) : Andr
         // A transcript from an older pipeline may have put two people under one speaker, so its
         // voice isn't learned: the call is labelled, and its redo on the charger separates them.
         if ((dao.get(id)?.pipeline ?: 0) >= Pipeline.CURRENT) {
-            val voice = dao.voices(id).firstOrNull { it.speaker == speaker }?.let { VoiceMath.fromBytes(it.embedding) }
+            // Lines given to someone else by hand leave the stored fingerprints out of date until they're worked out
+            // again (VoiceRefreshWorker); the voiceprint can't have a voice taken out, so the speaker's voice is worked
+            // out from the lines as they are now instead.
+            val stored = editing.withLock { dao.voices(id).takeUnless { Work.refreshingVoices(getApplication(), id) } }
+            val voice = stored?.firstOrNull { it.speaker == speaker }?.let { VoiceMath.fromBytes(it.embedding) }
                 ?: learnVoiceFromAudio(speaker)
             if (voice != null) {
                 VoiceProfile(getApplication()).add(voice)
@@ -236,6 +272,7 @@ class TranscriptViewModel(app: Application, savedState: SavedStateHandle) : Andr
     /** "That's not me": this call's owner label was wrong. */
     fun notMe(transcript: Long?) = viewModelScope.launch(Dispatchers.IO) {
         if (!stillShowing(transcript)) return@launch
+        forgetUndo()
         dao.setOwnerByHand(id, null)
         resummarize()
     }
@@ -243,6 +280,7 @@ class TranscriptViewModel(app: Application, savedState: SavedStateHandle) : Andr
     /** A name chosen in "Who is this?" (blank clears it). With Recognise voices on, the voice is learned under it. */
     fun nameSpeaker(speaker: Int, name: String, transcript: Long?) = viewModelScope.launch(Dispatchers.IO) {
         if (!stillShowing(transcript)) return@launch
+        forgetUndo()
         if (name.isBlank()) dao.deleteSpeakerName(id, speaker)
         else dao.upsertSpeakerNames(listOf(SpeakerName(id, speaker, name.trim())))
         resummarize()
@@ -259,7 +297,9 @@ class TranscriptViewModel(app: Application, savedState: SavedStateHandle) : Andr
     fun rejectSuggestion(speaker: Int, transcript: Long?) {
         val suggestion = suggestions.value[speaker] ?: return
         viewModelScope.launch(Dispatchers.IO) {
-            if (stillShowing(transcript)) voiceDao.reject(id, speaker, suggestion.voiceId)
+            if (!stillShowing(transcript)) return@launch
+            forgetUndo()
+            voiceDao.reject(id, speaker, suggestion.voiceId)
         }
     }
 
@@ -303,6 +343,185 @@ class TranscriptViewModel(app: Application, savedState: SavedStateHandle) : Andr
         }
     }
 
+    // ---------------------------------------------------------------- editing
+
+    /** Settings: the tip about long-pressing a line has been seen (true until settings are read, so it doesn't flash). */
+    val editTipSeen: StateFlow<Boolean> = settingsStore.flow.map { it.editTipSeen }.distinctUntilChanged()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, true)
+
+    fun markEditTipSeen() {
+        if (!editTipSeen.value) viewModelScope.launch { settingsStore.setEditTipSeen(true) }
+    }
+
+    /** Common corrections, for "Always correct this?". */
+    val corrections: StateFlow<List<Correction>> = correctionDao.observe().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    private val notices = Channel<EditNotice>(Channel.BUFFERED)
+    val editNotices: Flow<EditNotice> = notices.receiveAsFlow()
+
+    /** The last change by hand, which Undo puts back: one level, kept while this screen is open. */
+    private class Change(val token: Long, val snapshot: CallSnapshot)
+
+    @Volatile private var lastChange: Change? = null
+    private var changes = 0L
+
+    /** One change at a time, so a quick second tap works from the first one's result. */
+    private val editing = Mutex()
+
+    /** A change queued the summary to be written again: it's asked for once the user leaves the transcript. */
+    @Volatile private var summaryQueued = false
+
+    /** Naming a speaker, say, after a change: Undo would put the old names back too, so it's no longer offered. */
+    private suspend fun forgetUndo() {
+        if (lastChange == null) return
+        lastChange = null
+        notices.send(EditNotice(null))
+    }
+
+    /** The turn's lines as stored, or null if they changed since it was shown. */
+    private fun linesOf(turn: Turn): List<Segment>? {
+        val byId = segments.value.associateBy { it.id }
+        val lines = turn.segmentIds.map { byId[it] ?: return null }
+        if (lines.isEmpty() || lines.any { it.speaker != turn.speaker } || TranscriptEdits.text(lines) != turn.text) return null
+        return lines
+    }
+
+    /** Edits mark the summary to be written again, when there is one and the model is installed. */
+    private fun resummarizes() = Models.isInstalled(getApplication(), Models.Set.SUMMARY)
+
+    /**
+     * Runs one change by hand: [change] returns the call as it was before, for Undo, and what to say about it; null
+     * when the transcript changed meanwhile and nothing was done. With [speakers], the call's voice fingerprints are
+     * worked out again afterwards.
+     */
+    private fun change(speakers: Boolean, suggestion: Pair<String, String>? = null, change: suspend () -> Pair<CallSnapshot, String>?) =
+        viewModelScope.launch(Dispatchers.IO) {
+            editing.withLock {
+                // Finished even if the screen closes meanwhile.
+                val done = withContext(NonCancellable) {
+                    change()?.also { if (speakers) Work.refreshVoices(getApplication(), id) }
+                }
+                val (before, message) = done ?: run {
+                    notices.send(EditNotice("The transcript changed meanwhile, so nothing was changed. Try again."))
+                    return@withLock
+                }
+                val token = ++changes
+                lastChange = Change(token, before)
+                if (before.recording.summaryStatus != SummaryStatus.NONE && resummarizes()) summaryQueued = true
+                notices.send(EditNotice(message, token, suggestion))
+            }
+        }
+
+    /** Speaker numbers for [targets]: someone new gets the next number not used in the call, one each. */
+    private class Resolved(val speakers: List<Int>, val owner: Int?, val names: List<SpeakerName>, val labels: List<String>)
+
+    private suspend fun resolve(targets: List<SpeakerTarget>): Resolved? {
+        val call = dao.snapshot(id) ?: return null
+        val used = call.segments.map { it.speaker } + call.names.map { it.speaker } + call.voices.map { it.speaker } +
+            call.samples.map { it.speaker } + listOfNotNull(call.recording.ownerSpeaker)
+        var next = (used.maxOrNull() ?: -1) + 1
+        var owner: Int? = null
+        val speakers = ArrayList<Int>()
+        val names = ArrayList<SpeakerName>()
+        val labels = ArrayList<String>()
+        for (target in targets) {
+            val speaker = when (target) {
+                is SpeakerTarget.Existing -> target.speaker
+                else -> next++
+            }
+            when (target) {
+                is SpeakerTarget.Me -> owner = speaker
+                is SpeakerTarget.Caller -> names += SpeakerName(id, speaker, target.name)
+                else -> {}
+            }
+            speakers += speaker
+            labels += when (target) {
+                is SpeakerTarget.Existing -> if (this.names.value.isOwner(speaker)) "you" else this.names.value.label(speaker)
+                is SpeakerTarget.Me -> "you"
+                is SpeakerTarget.Caller -> target.name
+                is SpeakerTarget.New -> "Speaker ${speaker + 1}"
+            }
+        }
+        return Resolved(speakers, owner, names, labels)
+    }
+
+    /**
+     * "Edit text": the turn becomes one line saying [typed], kept from common corrections. When one phrase of a few
+     * words was replaced ("UV" by "Youvee"), Undo is followed by the offer to always write it that way.
+     */
+    fun editText(turn: Turn, transcript: Long?, typed: String) {
+        val text = TranscriptEdits.clean(typed)
+        if (text.isEmpty() || text == turn.text) return
+        // Worked out against what the recogniser wrote, which rules apply to: a word a rule wrote gives a rule for its words.
+        val recognized = linesOf(turn)?.let(TranscriptEdits::recognized) ?: turn.text
+        val suggestion = TranscriptEdits.learnedPhrase(turn.text, text, recognized, corrections.value.toCorrections())?.takeUnless { (heard, written) ->
+            corrections.value.any { it.heardKey == Corrections.keyOf(heard) && it.written == written.trim() }
+        }
+        change(speakers = false, suggestion) {
+            val lines = linesOf(turn) ?: return@change null
+            dao.changeLines(id, transcript, lines, listOf(TranscriptEdits.edit(lines, text)), resummarize = resummarizes())
+                ?.let { it to "Line edited" }
+        }
+    }
+
+    /** "Someone else said this…": the whole turn goes to [target]. */
+    fun reassign(turn: Turn, transcript: Long?, target: SpeakerTarget) = change(speakers = true) {
+        val lines = linesOf(turn) ?: return@change null
+        val r = resolve(listOf(target)) ?: return@change null
+        if (r.speakers[0] == turn.speaker) return@change null
+        dao.changeLines(id, transcript, lines, TranscriptEdits.reassign(lines, r.speakers[0]), r.owner, r.names, resummarizes())
+            ?.let { it to "Moved to ${r.labels[0]}" }
+    }
+
+    /** "Split line…": the turn's words before word [at] go to [before], the rest to [after]. */
+    fun split(turn: Turn, transcript: Long?, at: Int, before: SpeakerTarget, after: SpeakerTarget) = change(speakers = true) {
+        val lines = linesOf(turn) ?: return@change null
+        if (at !in 1 until TranscriptEdits.words(lines).size) return@change null
+        val r = resolve(listOf(before, after)) ?: return@change null
+        if (r.speakers[0] == r.speakers[1]) return@change null
+        val new = TranscriptEdits.split(lines, at, r.speakers[0], r.speakers[1])
+        dao.changeLines(id, transcript, lines, new, r.owner, r.names, resummarizes())?.let { it to "Line split" }
+    }
+
+    /**
+     * "Same person as…": everything [from] said is [into]'s. The message names nobody: a merge can change the name
+     * shown (a name or the You label moves with the lines, and the caller's name comes back on a two-person call).
+     */
+    fun mergeSpeakers(from: Int, into: Int, transcript: Long?) = change(speakers = true) {
+        dao.mergeSpeakers(id, transcript, from, into, resummarizes())?.let { it to "Speakers merged" }
+    }
+
+    /** Puts back the call as it was before change [token], if that's still the last one. */
+    fun undo(token: Long) = viewModelScope.launch(Dispatchers.IO) {
+        editing.withLock {
+            val change = lastChange?.takeIf { it.token == token } ?: return@withLock
+            lastChange = null
+            // The fingerprints come back with the lines; a refresh queued by the change works from the lines as they are then.
+            val restored = withContext(NonCancellable) { dao.restore(change.snapshot) }
+            if (!restored) notices.send(EditNotice("Couldn't undo: the call was transcribed again meanwhile."))
+            // The snapshot's fingerprints may predate an earlier change whose refresh has finished since; work them out
+            // again from the restored lines, so "Me" never learns from out-of-date ones.
+            else Work.refreshVoices(getApplication(), id)
+        }
+    }
+
+    /**
+     * "Always": the rule, from the correction dialog. With [thisCall], the rest of this transcript is corrected at once;
+     * with [earlierCalls], other calls are in the background.
+     */
+    fun addCorrection(heard: String, written: String, earlierCalls: Boolean, thisCall: Boolean) =
+        getApplication<LonghandApp>().appScope.launch(Dispatchers.IO) {
+            CommonCorrections.add(getApplication(), heard, written, earlierCalls, call = id.takeIf { thisCall }, except = id.takeUnless { thisCall })
+        }
+
+    /** For "Also correct N other calls": calls other than this one. */
+    suspend fun otherCallsSaying(heard: String): Int =
+        withContext(Dispatchers.Default) { CommonCorrections.earlierCalls(getApplication(), heard, except = id) }
+
+    /** For "Also correct N other lines in this call". */
+    suspend fun linesHereSaying(heard: String): Int =
+        withContext(Dispatchers.Default) { CommonCorrections.linesInCall(getApplication(), id, heard) }
+
     // ---------------------------------------------------------------- caller
 
     /** The contact the user picked for this call (ACTION_PICK on phone numbers). */
@@ -322,8 +541,13 @@ class TranscriptViewModel(app: Application, savedState: SavedStateHandle) : Andr
 
     // ---------------------------------------------------------------- queue & export
 
-    /** Queues this recording again and starts right away, regardless of the charging setting. */
+    /**
+     * Queues this recording again and starts right away, regardless of the charging setting. Edits by hand are replaced
+     * (the screen asks first), so the call stops counting as edited.
+     */
     fun retranscribe() = viewModelScope.launch(Dispatchers.IO) {
+        forgetUndo()
+        dao.forgetEdits(id)
         dao.requeue(listOf(id))
         dao.request(listOf(id))
         Work.enqueueTranscribe(getApplication(), followUp = true)
@@ -495,5 +719,15 @@ class TranscriptViewModel(app: Application, savedState: SavedStateHandle) : Andr
 
     override fun onCleared() {
         player?.release()
+        // Leaving the transcript: a summary queued by edits is asked for now, once (respecting "Only while charging").
+        if (summaryQueued) {
+            val app = getApplication<LonghandApp>()
+            app.appScope.launch(Dispatchers.IO) {
+                if (dao.get(id)?.summaryStatus == SummaryStatus.PENDING && Work.mayRunNow(app)) {
+                    dao.request(listOf(id))
+                    Work.enqueueTranscribe(app, followUp = true)
+                }
+            }
+        }
     }
 }

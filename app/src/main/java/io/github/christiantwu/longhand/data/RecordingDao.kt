@@ -6,7 +6,9 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
+import androidx.room.Update
 import androidx.room.Upsert
+import io.github.christiantwu.longhand.engine.Corrections
 import io.github.christiantwu.longhand.engine.VoiceMath
 import kotlinx.coroutines.flow.Flow
 
@@ -21,6 +23,26 @@ data class CallRow(
     val matchMs: Long?,
     /** The search these rows were found for, so a newer one typed meanwhile isn't highlighted in them. */
     val matchQuery: String?,
+)
+
+/** A line common corrections may change (not edited by hand), with what the recogniser wrote if that differs. */
+data class CorrectableLine(val id: Long, val recordingId: Long, val text: String, val recognized: String?) {
+    /** What corrections start from: the recogniser's text. */
+    val source: String get() = recognized ?: text
+}
+
+/**
+ * A call as it was before a change by hand (RecordingDao.changeLines, mergeSpeakers), to put back for Undo: its lines,
+ * speakers' names, voice fingerprints and links to known voices, and from [recording] the owner, when it was edited
+ * and the summary's state.
+ */
+class CallSnapshot(
+    val recording: Recording,
+    val segments: List<Segment>,
+    val names: List<SpeakerName>,
+    val voices: List<SpeakerVoice>,
+    val samples: List<VoiceSample>,
+    val rejections: List<VoiceRejection>,
 )
 
 /** Search text as a LIKE pattern that finds it literally, anywhere: `LIKE :pattern ESCAPE '\'`. */
@@ -140,6 +162,10 @@ interface RecordingDao {
     @Query("UPDATE recordings SET status = 'FAILED', progress = 0, error = :error, requested = 0 WHERE id = :id")
     suspend fun markFailed(id: Long, error: String)
 
+    /** "Transcribe again" was confirmed: the edits are to be replaced, so the call no longer counts as edited. */
+    @Query("UPDATE recordings SET editedAt = NULL WHERE id = :id")
+    suspend fun forgetEdits(id: Long)
+
     /** Queue again from scratch (manual retry, or the file changed). */
     @Query("UPDATE recordings SET status = 'PENDING', progress = 0, attempts = 0, error = NULL WHERE id IN (:ids)")
     suspend fun requeue(ids: List<Long>)
@@ -183,7 +209,7 @@ interface RecordingDao {
      */
     @Query(
         """UPDATE recordings SET status = 'DONE', progress = 1, error = NULL, attempts = 0, durationMs = :durationMs,
-           transcribedAt = :at, processingMs = :processingMs, ownerSpeaker = :ownerSpeaker, ownerManual = 0,
+           transcribedAt = :at, processingMs = :processingMs, ownerSpeaker = :ownerSpeaker, ownerManual = 0, editedAt = NULL,
            topic = CASE WHEN :keepSummary THEN topic ELSE NULL END,
            summary = CASE WHEN :keepSummary THEN summary ELSE NULL END,
            followUps = CASE WHEN :keepSummary THEN followUps ELSE NULL END,
@@ -198,11 +224,14 @@ interface RecordingDao {
 
     /**
      * Stores a finished transcript with its speakers' voice fingerprints, and queues a new summary
-     * when [summarize] is true. Speakers are numbered afresh, so names given to the previous
-     * transcript's speakers are dropped, and so are their links to known voices and the
-     * suggestions turned down for them. A [redo] of an old transcript (the same audio) keeps its
+     * when [summarize] is true. [segments] say what the recogniser wrote; common corrections are
+     * applied here, keeping that as Segment.recognized. Speakers are numbered afresh, so names given
+     * to the previous transcript's speakers are dropped, and so are their links to known voices and
+     * the suggestions turned down for them. A [redo] of an old transcript (the same audio) keeps its
      * summary until the new one replaces it, unless no speech was found this time, and isn't
-     * announced again.
+     * announced again. Hand edits are replaced too ("Transcribe again" warns of that), except that a
+     * [redo] of a transcript edited while it ran is dropped.
+     * @return false when nothing was saved: the call was deleted, or (a [redo]) edited meanwhile.
      */
     @Transaction
     suspend fun saveTranscript(
@@ -214,11 +243,16 @@ interface RecordingDao {
         ownerSpeaker: Int?,
         summarize: Boolean,
         redo: Boolean = false,
-    ) {
+    ): Boolean {
         // Deleted while it was being transcribed: nothing to save it to.
-        if (get(id) == null) return
+        val rec = get(id) ?: return false
+        // A redo leaves the transcript on show, where it can be edited while the redo runs: the edits win.
+        if (redo && rec.editedAt != null) return false
+        // The rules as they are in this transaction: one removed before it isn't applied, and the job putting back a
+        // removed rule's words (CorrectionsWorker) runs after it, so it finds these lines.
+        val rules = correctionRules().toCorrections()
         deleteSegments(id)
-        insertSegments(segments)
+        insertSegments(segments.map { it.corrected(rules) })
         deleteVoices(id)
         insertVoices(voices)
         deleteSpeakerNames(id)
@@ -228,15 +262,271 @@ interface RecordingDao {
         markDone(id, durationMs, System.currentTimeMillis(), processingMs, ownerSpeaker,
             if (summarize && segments.isNotEmpty()) SummaryStatus.PENDING else SummaryStatus.NONE,
             keepSummary = redo && segments.isNotEmpty(), pipeline = Pipeline.CURRENT, redo = redo)
+        return true
+    }
+
+    // ---- common corrections ----
+
+    /** The common corrections, read here so a change and the rules it's made with are in one transaction. */
+    @Query("SELECT * FROM corrections")
+    suspend fun correctionRules(): List<Correction>
+
+    /** Call [id]'s lines not edited by hand whose recognised text is like [pattern] (Corrections.likePattern). */
+    @Query("""SELECT id, recordingId, text, recognized FROM segments WHERE recordingId = :id AND edited = 0 AND COALESCE(recognized, text) LIKE :pattern ESCAPE '\'""")
+    suspend fun correctableLines(id: Long, pattern: String): List<CorrectableLine>
+
+    /**
+     * The calls with such lines, by id only: a pattern that can't narrow them down ("%", for words in Cyrillic, say)
+     * matches every line, so their text is read a call at a time.
+     */
+    @Query("""SELECT DISTINCT recordingId FROM segments WHERE edited = 0 AND COALESCE(recognized, text) LIKE :pattern ESCAPE '\'""")
+    suspend fun callsWithCorrectableLines(pattern: String): List<Long>
+
+    @Query("UPDATE segments SET text = :text, recognized = :recognized WHERE id = :id")
+    suspend fun setLineText(id: Long, text: String, recognized: String?)
+
+    @Query("UPDATE recordings SET topic = :topic, summary = :summary, followUps = :followUps WHERE id = :id")
+    suspend fun setSummaryText(id: Long, topic: String?, summary: String?, followUps: String?)
+
+    /**
+     * Common corrections in one call, for the rule for [heard] just added or removed (whether it's still there says
+     * which): every line whose recognised text says it, unless it was edited by hand, is written again from the
+     * recogniser's text with all the rules there are now, read in this transaction, so a removed rule's words come back.
+     *
+     * When a line changes, the summary follows without being written again: when the rule was added, its words are
+     * replaced in the topic, summary and follow-ups too, and a summary being written from the old lines at this
+     * moment is queued to be written again. When it was removed, its words can't be told apart in the summary, so
+     * with [resummarize] a written one is queued again.
+     * @return true when a line's text changed.
+     */
+    @Transaction
+    suspend fun correctCall(id: Long, heard: String, resummarize: Boolean): Boolean {
+        val all = correctionRules()
+        val rules = all.toCorrections()
+        val added = all.firstOrNull { it.heardKey == Corrections.keyOf(heard) }?.let { listOf(it).toCorrections() }
+        val phrase = Corrections.saying(heard)
+        var changed = false
+        for (line in correctableLines(id, Corrections.likePattern(heard))) {
+            if (!phrase.matches(line.source)) continue
+            val (text, recognized) = rules.correct(line.source)
+            if (text != line.text || recognized != line.recognized) setLineText(line.id, text, recognized)
+            if (text != line.text) changed = true
+        }
+        if (!changed) return false
+        val rec = get(id) ?: return true
+        val summarized = rec.summaryStatus == SummaryStatus.DONE || rec.summaryStatus == SummaryStatus.PROCESSING
+        if (added != null) {
+            setSummaryText(id, rec.topic?.let(added::apply), rec.summary?.let(added::apply), rec.followUps?.let(added::apply))
+            if (rec.summaryStatus == SummaryStatus.PROCESSING) setSummaryStatus(id, SummaryStatus.PENDING)
+        } else if (resummarize && summarized) {
+            setSummaryStatus(id, SummaryStatus.PENDING)
+        }
+        return true
+    }
+
+    // ---- changes by hand (TranscriptViewModel; the edits themselves are worked out by engine.TranscriptEdits) ----
+
+    @Query("SELECT * FROM voice_samples WHERE recordingId = :id")
+    suspend fun voiceSamples(id: Long): List<VoiceSample>
+
+    @Query("SELECT * FROM voice_rejections WHERE recordingId = :id")
+    suspend fun voiceRejections(id: Long): List<VoiceRejection>
+
+    /** The call as it is now, for undoing a change; null if it's gone. */
+    @Transaction
+    suspend fun snapshot(id: Long): CallSnapshot? {
+        val rec = get(id) ?: return null
+        return CallSnapshot(rec, segments(id), speakerNames(id), voices(id), voiceSamples(id), voiceRejections(id))
+    }
+
+    @Update
+    suspend fun updateSegments(segments: List<Segment>)
+
+    @Query("DELETE FROM segments WHERE id IN (:ids)")
+    suspend fun deleteSegmentsById(ids: List<Long>)
+
+    @Query("UPDATE segments SET speaker = :into WHERE recordingId = :id AND speaker = :from")
+    suspend fun moveSpeakerLines(id: Long, from: Int, into: Int)
+
+    @Query("UPDATE recordings SET editedAt = :at WHERE id = :id")
+    suspend fun setEditedAt(id: Long, at: Long)
+
+    @Query("UPDATE recordings SET ownerSpeaker = :speaker, ownerManual = :manual WHERE id = :id")
+    suspend fun setOwner(id: Long, speaker: Int?, manual: Boolean)
+
+    /**
+     * A speaker left without lines is gone: their name, voice fingerprint, links to known voices and suggestions
+     * turned down, and the owner's label if it was theirs (voice matching may then find the owner again). A known voice
+     * left without samples isn't forgotten here, so Undo can link it again; it isn't listed or suggested meanwhile, and
+     * the next naming forgets it (VoiceDao.deleteUnused).
+     */
+    @Transaction
+    suspend fun dropSpeakersWithoutLines(id: Long) {
+        deleteNamesWithoutLines(id)
+        deleteVoicesWithoutLines(id)
+        deleteSamplesWithoutLines(id)
+        deleteRejectionsWithoutLines(id)
+        dropOwnerWithoutLines(id)
+    }
+
+    @Query("DELETE FROM speaker_names WHERE recordingId = :id AND speaker NOT IN (SELECT speaker FROM segments WHERE recordingId = :id)")
+    suspend fun deleteNamesWithoutLines(id: Long)
+
+    @Query("DELETE FROM speaker_voices WHERE recordingId = :id AND speaker NOT IN (SELECT speaker FROM segments WHERE recordingId = :id)")
+    suspend fun deleteVoicesWithoutLines(id: Long)
+
+    @Query("DELETE FROM voice_samples WHERE recordingId = :id AND speaker NOT IN (SELECT speaker FROM segments WHERE recordingId = :id)")
+    suspend fun deleteSamplesWithoutLines(id: Long)
+
+    @Query("DELETE FROM voice_rejections WHERE recordingId = :id AND speaker NOT IN (SELECT speaker FROM segments WHERE recordingId = :id)")
+    suspend fun deleteRejectionsWithoutLines(id: Long)
+
+    @Query(
+        """UPDATE recordings SET ownerSpeaker = NULL, ownerManual = 0 WHERE id = :id AND ownerSpeaker IS NOT NULL
+           AND ownerSpeaker NOT IN (SELECT speaker FROM segments WHERE recordingId = :id)"""
+    )
+    suspend fun dropOwnerWithoutLines(id: Long)
+
+    /**
+     * What every change by hand ends with: the call is marked edited (so redos leave it alone), speakers left without
+     * lines are dropped, and with [resummarize] a summary is queued to be written again, without asking for it now:
+     * the screen asks once the user leaves the transcript, so a few edits in a row don't load the summary model each.
+     */
+    @Transaction
+    suspend fun afterHandChange(id: Long, resummarize: Boolean) {
+        setEditedAt(id, System.currentTimeMillis())
+        dropSpeakersWithoutLines(id)
+        val rec = get(id) ?: return
+        if (resummarize && rec.summaryStatus != SummaryStatus.NONE) setSummaryStatus(id, SummaryStatus.PENDING)
+    }
+
+    /**
+     * Lines changed by hand: [old], as the change was worked out from, become [new] (an existing id is updated, id 0
+     * inserted, and an id left out deleted). With [owner], that speaker becomes the owner, set by hand; [names] are
+     * given to speakers. Nothing changes unless the call still shows the same [transcript] (a redo numbers the speakers
+     * afresh) with [old] exactly as they were.
+     * @return the call as it was before, for Undo; null if nothing was changed.
+     */
+    @Transaction
+    suspend fun changeLines(
+        id: Long, transcript: Long?, old: List<Segment>, new: List<Segment>,
+        owner: Int? = null, names: List<SpeakerName> = emptyList(), resummarize: Boolean,
+    ): CallSnapshot? {
+        val before = snapshot(id) ?: return null
+        if (before.recording.status != RecordingStatus.DONE || before.recording.transcribedAt != transcript) return null
+        val current = before.segments.associateBy { it.id }
+        if (old.isEmpty() || old.any { current[it.id] != it }) return null
+        val kept = new.mapNotNull { it.id.takeIf { id -> id != 0L } }.toSet()
+        deleteSegmentsById(old.map { it.id }.filter { it !in kept })
+        updateSegments(new.filter { it.id != 0L })
+        insertSegments(new.filter { it.id == 0L })
+        if (owner != null) {
+            setOwner(id, owner, manual = true)
+            deleteSpeakerName(id, owner)
+        }
+        if (names.isNotEmpty()) upsertSpeakerNames(names)
+        afterHandChange(id, resummarize)
+        return before
+    }
+
+    /**
+     * "Same person as…": speaker [from]'s lines become [into]'s. [into] keeps their name, or takes [from]'s if they have
+     * none (and aren't the owner); the owner's label moves with [from]'s lines. [from]'s voice fingerprint and links to
+     * known voices go: the fingerprints are worked out again from the lines (VoiceRefreshWorker).
+     * @return the call as it was before, for Undo; null if nothing was changed (as for [changeLines]).
+     */
+    @Transaction
+    suspend fun mergeSpeakers(id: Long, transcript: Long?, from: Int, into: Int, resummarize: Boolean): CallSnapshot? {
+        val before = snapshot(id) ?: return null
+        val rec = before.recording
+        if (rec.status != RecordingStatus.DONE || rec.transcribedAt != transcript || from == into) return null
+        if (before.segments.none { it.speaker == from } || before.segments.none { it.speaker == into }) return null
+        moveSpeakerLines(id, from, into)
+        val names = before.names.associate { it.speaker to it.name }
+        val fromName = names[from]?.takeIf { it.isNotBlank() }
+        if (fromName != null && names[into].isNullOrBlank() && rec.ownerSpeaker != into) {
+            upsertSpeakerNames(listOf(SpeakerName(id, into, fromName)))
+        }
+        if (rec.ownerSpeaker == from) setOwner(id, into, rec.ownerManual)
+        afterHandChange(id, resummarize)
+        return before
+    }
+
+    @Query("INSERT OR REPLACE INTO voice_samples (recordingId, speaker, voiceId) SELECT :id, :speaker, k.id FROM known_voices k WHERE k.id = :voiceId")
+    suspend fun restoreSample(id: Long, speaker: Int, voiceId: Long)
+
+    @Query("INSERT OR IGNORE INTO voice_rejections (recordingId, speaker, voiceId) SELECT :id, :speaker, k.id FROM known_voices k WHERE k.id = :voiceId")
+    suspend fun restoreRejection(id: Long, speaker: Int, voiceId: Long)
+
+    @Query("UPDATE recordings SET ownerSpeaker = :owner, ownerManual = :ownerManual, editedAt = :editedAt WHERE id = :id")
+    suspend fun restoreEdits(id: Long, owner: Int?, ownerManual: Boolean, editedAt: Long?)
+
+    /** A summary queued by the change being undone, and not started, goes back to how it was. */
+    @Query("UPDATE recordings SET summaryStatus = :status WHERE id = :id AND summaryStatus = 'PENDING'")
+    suspend fun unqueueSummary(id: Long, status: SummaryStatus)
+
+    /**
+     * Undo: puts the call back as [snapshot] has it, unless its transcript was replaced meanwhile (a redo). Lines not
+     * edited by hand get the common corrections there are now, so a rule added or removed since the snapshot (whose
+     * job may already have been through this call) isn't undone with them. A known voice forgotten since (named
+     * elsewhere meanwhile) isn't brought back. A summary queued by the change goes back to how it was if it hasn't
+     * started; one being written from the changed lines is queued again.
+     * @return false if nothing was put back.
+     */
+    @Transaction
+    suspend fun restore(snapshot: CallSnapshot): Boolean {
+        val was = snapshot.recording
+        val id = was.id
+        val rec = get(id) ?: return false
+        if (rec.status != RecordingStatus.DONE || rec.transcribedAt != was.transcribedAt) return false
+        val rules = correctionRules().toCorrections()
+        deleteSegments(id)
+        insertSegments(snapshot.segments.map { it.corrected(rules) })
+        deleteSpeakerNames(id)
+        upsertSpeakerNames(snapshot.names)
+        deleteVoices(id)
+        insertVoices(snapshot.voices)
+        deleteVoiceSamples(id)
+        snapshot.samples.forEach { restoreSample(id, it.speaker, it.voiceId) }
+        deleteVoiceRejections(id)
+        snapshot.rejections.forEach { restoreRejection(id, it.speaker, it.voiceId) }
+        restoreEdits(id, was.ownerSpeaker, was.ownerManual, was.editedAt)
+        when {
+            rec.summaryStatus == SummaryStatus.PROCESSING -> setSummaryStatus(id, SummaryStatus.PENDING)
+            was.summaryStatus == SummaryStatus.DONE || was.summaryStatus == SummaryStatus.FAILED -> unqueueSummary(id, was.summaryStatus)
+        }
+        deleteUnusedKnownVoices()
+        return true
+    }
+
+    /**
+     * Voice fingerprints worked out again after a change of speakers (VoiceRefreshWorker), saved only if the call still
+     * shows the same [transcript] and its lines are still where and whose they were when [analysed].
+     */
+    @Transaction
+    suspend fun replaceVoices(id: Long, transcript: Long?, analysed: List<Segment>, voices: List<SpeakerVoice>): Boolean {
+        val rec = get(id) ?: return false
+        if (rec.transcribedAt != transcript) return false
+        fun spans(lines: List<Segment>) = lines.map { listOf(it.id, it.speaker.toLong(), it.startMs, it.endMs) }.sortedBy { it[0] }
+        if (spans(segments(id)) != spans(analysed)) return false
+        deleteVoices(id)
+        insertVoices(voices)
+        return true
     }
 
     // ---- redoing transcripts made by an older pipeline ----
 
-    /** The newest transcript made by an older pipeline whose redo hasn't failed (or crashed three times). */
-    @Query("SELECT * FROM recordings WHERE status = 'DONE' AND pipeline < :current AND attempts < 3 ORDER BY lastModified DESC LIMIT 1")
+    /**
+     * The newest transcript made by an older pipeline whose redo hasn't failed (or crashed three times). One edited by
+     * hand is kept as it is: a redo would replace the edits.
+     */
+    @Query(
+        """SELECT * FROM recordings WHERE status = 'DONE' AND pipeline < :current AND attempts < 3 AND editedAt IS NULL
+           ORDER BY lastModified DESC LIMIT 1"""
+    )
     suspend fun nextRedo(current: Int = Pipeline.CURRENT): Recording?
 
-    @Query("SELECT COUNT(*) FROM recordings WHERE status = 'DONE' AND pipeline < :current AND attempts < 3")
+    @Query("SELECT COUNT(*) FROM recordings WHERE status = 'DONE' AND pipeline < :current AND attempts < 3 AND editedAt IS NULL")
     suspend fun redoCount(current: Int = Pipeline.CURRENT): Int
 
     /** Counted before a redo starts, so one that keeps crashing the app is given up on. */

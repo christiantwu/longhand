@@ -1,5 +1,9 @@
 package io.github.christiantwu.longhand.ui
 
+import io.github.christiantwu.longhand.LonghandApp
+import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.Job
 import android.Manifest
 import android.app.Application
 import android.content.Intent
@@ -19,6 +23,7 @@ import io.github.christiantwu.longhand.data.AppDatabase
 import io.github.christiantwu.longhand.data.AppSettings
 import io.github.christiantwu.longhand.data.CallRow
 import io.github.christiantwu.longhand.data.CallerLookup
+import io.github.christiantwu.longhand.data.Correction
 import io.github.christiantwu.longhand.data.FolderScanner
 import io.github.christiantwu.longhand.data.KnownVoiceRow
 import io.github.christiantwu.longhand.data.Recording
@@ -28,6 +33,7 @@ import io.github.christiantwu.longhand.engine.Models
 import io.github.christiantwu.longhand.engine.VoiceProfile
 import io.github.christiantwu.longhand.export.CallText
 import io.github.christiantwu.longhand.work.CallState
+import io.github.christiantwu.longhand.work.CommonCorrections
 import io.github.christiantwu.longhand.work.ModelDownloadWorker
 import io.github.christiantwu.longhand.work.Work
 import kotlinx.coroutines.Dispatchers
@@ -41,6 +47,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 
 data class ModelState(
     /** Usable, perhaps on an earlier file while an improved one downloads ([update]). */
@@ -108,6 +115,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val settingsStore = Settings(app)
     private val dao = AppDatabase.get(app).recordings()
     private val voiceDao = AppDatabase.get(app).voices()
+    private val correctionDao = AppDatabase.get(app).corrections()
     private val workManager = WorkManager.getInstance(app)
 
     val settings: StateFlow<AppSettings?> = settingsStore.flow.stateIn(viewModelScope, SharingStarted.Eagerly, null)
@@ -286,6 +294,40 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun forgetAllKnownVoices() = viewModelScope.launch(Dispatchers.IO) { voiceDao.forgetAll() }
 
+    /** Common corrections, in the order Settings lists them. */
+    val corrections: StateFlow<List<Correction>> =
+        correctionDao.observe().stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    fun addCorrection(heard: String, written: String, earlierCalls: Boolean) = viewModelScope.launch(Dispatchers.IO) {
+        CommonCorrections.add(getApplication(), heard, written, earlierCalls)
+    }
+
+    /**
+     * Rules removed but not yet for [UNDO_WINDOW_MS]: removing one rewrites earlier transcripts, so it waits until Undo is
+     * no longer offered, and Undo simply keeps the rule. They're left out of the list meanwhile.
+     */
+    val removingCorrections = MutableStateFlow<Set<Long>>(emptySet())
+    private val removals = java.util.concurrent.ConcurrentHashMap<Long, Job>()
+
+    fun removeCorrection(rule: Correction) {
+        removingCorrections.update { it + rule.id }
+        removals[rule.id] = getApplication<LonghandApp>().appScope.launch(Dispatchers.IO) {
+            delay(UNDO_WINDOW_MS)
+            CommonCorrections.remove(getApplication(), rule)
+            removals.remove(rule.id)
+            removingCorrections.update { it - rule.id }
+        }
+    }
+
+    fun undoRemoveCorrection(rule: Correction) {
+        removals.remove(rule.id)?.cancel()
+        removingCorrections.update { it - rule.id }
+    }
+
+    /** For "Also correct N earlier calls". */
+    suspend fun earlierCallsSaying(heard: String): Int =
+        withContext(Dispatchers.Default) { CommonCorrections.earlierCalls(getApplication(), heard) }
+
     /** Saves the choices before [onDone] runs, so no scan can start with the old settings. */
     fun finishSetup(includeExisting: Boolean, onDone: () -> Unit) = viewModelScope.launch {
         settingsStore.setSkipBefore(if (includeExisting) 0L else System.currentTimeMillis())
@@ -315,4 +357,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         settingsStore.setChargingOnly(v)
         Work.scanNow(getApplication())
     }
+
 }
+
+/** How long Undo is offered after removing a correction: a long snackbar's time. */
+const val UNDO_WINDOW_MS = 10_000L

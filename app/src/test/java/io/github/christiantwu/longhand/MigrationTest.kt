@@ -10,9 +10,11 @@ import java.lang.reflect.Proxy
 /** Migrations must create exactly what Room exports for the new version, or opening the database fails. */
 class MigrationTest {
 
+    private fun schema(version: Int) = File("schemas/io.github.christiantwu.longhand.data.AppDatabase/$version.json").readText()
+
     /** The CREATE statements of [tables] (each table, then its indices) in an exported schema. */
     private fun exportedSql(version: Int, tables: List<String>): List<String> {
-        val json = File("schemas/io.github.christiantwu.longhand.data.AppDatabase/$version.json").readText()
+        val json = schema(version)
         val createSql = Regex("\"createSql\": \"((?:[^\"\\\\]|\\\\.)*)\"")
         return tables.flatMap { table ->
             val start = json.indexOf("\"tableName\": \"$table\"").also { check(it >= 0) { "no $table in $version.json" } }
@@ -22,6 +24,33 @@ class MigrationTest {
             }.toList()
         }
     }
+
+    /** Every table in an exported schema. */
+    private fun tables(version: Int): List<String> =
+        Regex("\"tableName\": \"(\\w+)\"").findAll(schema(version)).map { it.groupValues[1] }.toList()
+
+    /** A CREATE TABLE statement's parts at the top level: column definitions, then constraints such as PRIMARY KEY(...). */
+    private fun parts(createTable: String): List<String> {
+        val body = createTable.substring(createTable.indexOf('(') + 1, createTable.lastIndexOf(')'))
+        val out = ArrayList<String>()
+        var depth = 0
+        var from = 0
+        body.forEachIndexed { i, c ->
+            when (c) {
+                '(' -> depth++
+                ')' -> depth--
+                ',' -> if (depth == 0) {
+                    out += body.substring(from, i).trim()
+                    from = i + 1
+                }
+            }
+        }
+        return out + body.substring(from).trim()
+    }
+
+    /** The column definitions of [table] in an exported schema, by name. */
+    private fun columns(version: Int, table: String): Map<String, String> =
+        parts(exportedSql(version, listOf(table)).first()).filter { it.startsWith("`") }.associateBy { it.substringBefore(' ') }
 
     private fun executed(migrate: (SupportSQLiteDatabase) -> Unit): List<String> {
         val sql = ArrayList<String>()
@@ -39,5 +68,26 @@ class MigrationTest {
             exportedSql(3, listOf("known_voices", "voice_samples", "voice_rejections")),
             executed { AppDatabase.MIGRATION_2_3.migrate(it) },
         )
+    }
+
+    @Test fun version4AddsTheCorrectionsTableAndEditingColumnsAsRoomExportsThem() {
+        val (alters, creates) = executed { AppDatabase.MIGRATION_3_4.migrate(it) }.partition { it.startsWith("ALTER TABLE") }
+        assertEquals(tables(3) + "corrections", tables(4))
+        assertEquals(exportedSql(4, listOf("corrections")), creates)
+
+        val added = alters.map {
+            val m = checkNotNull(Regex("ALTER TABLE `(\\w+)` ADD COLUMN (.+)").matchEntire(it)) { "unexpected $it" }
+            m.groupValues[1] to m.groupValues[2]
+        }
+        assertEquals(setOf("segments", "recordings"), added.map { it.first }.toSet())
+        for (table in tables(3)) {
+            val definitions = added.filter { it.first == table }.map { it.second }
+            // The new columns exactly as Room declares them (type, NOT NULL, default) and nothing else changed:
+            // the other columns, the keys and the indices are as in version 3.
+            assertEquals(table, columns(3, table) + definitions.associateBy { it.substringBefore(' ') }, columns(4, table))
+            val (old, new) = listOf(3, 4).map { v -> exportedSql(v, listOf(table)) }
+            assertEquals(table, parts(old.first()).filterNot { it.startsWith("`") }, parts(new.first()).filterNot { it.startsWith("`") })
+            assertEquals(table, old.drop(1), new.drop(1))
+        }
     }
 }

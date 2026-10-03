@@ -19,7 +19,9 @@ object ScanDiff {
     /**
      * Decides what a scan should do:
      * - files seen for the first time are added (once they've stopped changing),
-     * - a finished or failed transcript whose file changed is queued again,
+     * - a finished or failed transcript whose file changed is queued again, unless it was edited by
+     *   hand: a new transcript would replace the edits, which only "Transcribe again" does, after
+     *   asking (its file details are still updated),
      * - transcripts of files that disappeared are kept.
      */
     fun plan(existing: List<Recording>, listed: List<ListedFile>, now: Long): ScanPlan {
@@ -34,7 +36,8 @@ object ScanDiff {
                 newFiles += f
             } else if (rec.sizeBytes != f.size || rec.lastModified != f.lastModified) {
                 changed += rec.id to f
-                if (rec.status == RecordingStatus.DONE || rec.status == RecordingStatus.FAILED) requeue += rec.id
+                val finished = rec.status == RecordingStatus.DONE || rec.status == RecordingStatus.FAILED
+                if (finished && rec.editedAt == null) requeue += rec.id
             }
         }
         return ScanPlan(newFiles, requeue, changed)

@@ -58,7 +58,11 @@ private fun AppNav() {
             )
         }
         composable("settings") {
-            SettingsScreen(vm, onBack = { nav.popBackStack() }, onLicences = { nav.navigate("licences") })
+            SettingsScreen(vm, onBack = { nav.popBackStack() }, onCorrections = { nav.navigate("corrections") },
+                onLicences = { nav.navigate("licences") })
+        }
+        composable("corrections") {
+            CorrectionsScreen(vm, onBack = { nav.popBackStack() })
         }
         composable("licences") {
             LicencesScreen(onBack = { nav.popBackStack() })

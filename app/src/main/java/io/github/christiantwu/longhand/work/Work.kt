@@ -35,6 +35,8 @@ object Work {
     const val TRANSCRIBE = "transcribe"
     const val VOICE_MATCH = "voice-match"
     const val AFTER_CALL = "after-call"
+    const val CORRECTIONS = "corrections"
+    const val VOICES = "voices"
 
     /**
      * How long after a call ends to look for its recording. Longer than the scan's
@@ -172,6 +174,43 @@ object Work {
             OneTimeWorkRequestBuilder<VoiceMatchWorker>().build(),
         )
     }
+
+    /**
+     * Corrects earlier transcripts after the common correction for [heard] was added or removed
+     * ([CorrectionsWorker]). Each change waits for the one before, so they're applied in the order made.
+     */
+    fun correctEarlierCalls(context: Context, heard: String, except: Long? = null) {
+        WorkManager.getInstance(context).enqueueUniqueWork(
+            CORRECTIONS,
+            ExistingWorkPolicy.APPEND_OR_REPLACE,
+            OneTimeWorkRequestBuilder<CorrectionsWorker>()
+                .setInputData(workDataOf(CorrectionsWorker.HEARD to heard, CorrectionsWorker.EXCEPT to (except ?: -1L)))
+                .build(),
+        )
+    }
+
+    /**
+     * Works out a call's voice fingerprints again after its lines changed speaker by hand ([VoiceRefreshWorker]). It
+     * waits a few seconds, and a later change replaces it, so a few edits in a row decode the audio once. Returns once
+     * it's queued, so [refreshingVoices] sees it straight after (blocking: call it off the main thread).
+     */
+    fun refreshVoices(context: Context, recordingId: Long) {
+        WorkManager.getInstance(context).enqueueUniqueWork(
+            "$VOICES-$recordingId",
+            ExistingWorkPolicy.REPLACE,
+            OneTimeWorkRequestBuilder<VoiceRefreshWorker>()
+                .setInputData(workDataOf(VoiceRefreshWorker.RECORDING to recordingId))
+                .setInitialDelay(5, TimeUnit.SECONDS)
+                .build(),
+        ).result.get()
+    }
+
+    /**
+     * Whether a call's voice fingerprints are still to be worked out again after a change by hand ([refreshVoices]):
+     * until then, the stored ones may mix in speech since given to someone else. Blocking: call it off the main thread.
+     */
+    fun refreshingVoices(context: Context, recordingId: Long): Boolean =
+        WorkManager.getInstance(context).getWorkInfosForUniqueWork("$VOICES-$recordingId").get().any { !it.state.isFinished }
 
     fun createChannels(context: Context) {
         val nm = context.getSystemService(NotificationManager::class.java)

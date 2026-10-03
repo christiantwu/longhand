@@ -1,13 +1,17 @@
 package io.github.christiantwu.longhand.ui
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Intent
+import android.os.Build
 import android.provider.ContactsContract
 import android.text.format.DateUtils
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.border
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -32,7 +36,9 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
@@ -45,7 +51,13 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Snackbar
+import androidx.compose.material3.SnackbarDuration
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Text
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -58,14 +70,24 @@ import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.CustomAccessibilityAction
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.selectableGroup
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.DpOffset
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -75,12 +97,14 @@ import io.github.christiantwu.longhand.data.Recording
 import io.github.christiantwu.longhand.data.RecordingStatus
 import io.github.christiantwu.longhand.data.SummaryStatus
 import io.github.christiantwu.longhand.engine.SegmentLogic
+import io.github.christiantwu.longhand.engine.TranscriptEdits
 import io.github.christiantwu.longhand.engine.VoiceProfile
 import io.github.christiantwu.longhand.export.CallText
 import io.github.christiantwu.longhand.export.SearchMatch
 import io.github.christiantwu.longhand.export.SpeakerNames
 import io.github.christiantwu.longhand.export.TranscriptFormatter
 import io.github.christiantwu.longhand.export.Turn
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 /** [onCallsWith]: "Calls with …" was chosen, for the list to show that person's calls. */
@@ -92,9 +116,11 @@ fun TranscriptScreen(onBack: () -> Unit, onCallsWith: (PersonFilter) -> Unit) {
     val segments by vm.segments.collectAsStateWithLifecycle()
     val names by vm.names.collectAsStateWithLifecycle()
     val playback by vm.playback.collectAsStateWithLifecycle()
-    val learning by vm.learningVoice.collectAsStateWithLifecycle()
+    val learningVoice by vm.learningVoice.collectAsStateWithLifecycle()
     val suggestions by vm.suggestions.collectAsStateWithLifecycle()
     val recognising by vm.recogniseVoices.collectAsStateWithLifecycle()
+    val editTipSeen by vm.editTipSeen.collectAsStateWithLifecycle()
+    val corrections by vm.corrections.collectAsStateWithLifecycle()
     val turns = remember(segments) { TranscriptFormatter.turns(segments) }
     val voiceKnown = remember { VoiceProfile(context).samples() > 0 }
 
@@ -124,7 +150,40 @@ fun TranscriptScreen(onBack: () -> Unit, onCallsWith: (PersonFilter) -> Unit) {
     }
     // The speaker whose name was tapped, and which transcript that was (a redo renumbers speakers).
     var asking by remember { mutableStateOf<Pair<Int, Long?>?>(null) }
-    LaunchedEffect(rec?.transcribedAt) { if (asking != null && asking?.second != rec?.transcribedAt) asking = null }
+    // A line being corrected from its long-press menu, and how; kept when the screen rotates.
+    var correcting by rememberSaveable { mutableStateOf<LineAction?>(null) }
+    LaunchedEffect(rec?.transcribedAt) {
+        if (asking != null && asking?.second != rec?.transcribedAt) asking = null
+        if (rec != null && correcting != null && correcting?.transcript != rec?.transcribedAt) correcting = null
+    }
+    // Its turn, found again by its lines; once they've changed (another edit, a correction), there's nothing to correct.
+    val correctingTurn = correcting?.let { line -> turns.firstOrNull { it.segmentIds == line.segmentIds } }
+    LaunchedEffect(correcting, turns) {
+        if (correcting != null && correctingTurn == null && turns.isNotEmpty()) correcting = null
+    }
+    var confirmRedo by remember { mutableStateOf(false) }
+    // "Always correct this?" was accepted: the correction, to confirm in its dialog.
+    var alwaysCorrect by rememberSaveable { mutableStateOf<Pair<String, String>?>(null) }
+
+    // After a change by hand: Undo, then perhaps the offer to make it a common correction. A newer change takes over.
+    val snackbar = remember { SnackbarHostState() }
+    LaunchedEffect(Unit) {
+        vm.editNotices.collectLatest { notice ->
+            if (notice.message == null) {
+                snackbar.currentSnackbarData?.dismiss()
+                return@collectLatest
+            }
+            val result = snackbar.showSnackbar(notice.message, actionLabel = notice.token?.let { "Undo" }, duration = SnackbarDuration.Short)
+            if (result == SnackbarResult.ActionPerformed) {
+                notice.token?.let(vm::undo)
+                return@collectLatest
+            }
+            val (heard, written) = notice.suggestion ?: return@collectLatest
+            val always = snackbar.showSnackbar("Always write “$written” for “$heard”?", actionLabel = "Always",
+                withDismissAction = true, duration = SnackbarDuration.Long)
+            if (always == SnackbarResult.ActionPerformed) alwaysCorrect = heard to written
+        }
+    }
 
     val saveMarkdown = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/markdown")) { uri ->
         if (uri != null) vm.saveTo(uri, markdown = true)
@@ -211,7 +270,12 @@ fun TranscriptScreen(onBack: () -> Unit, onCallsWith: (PersonFilter) -> Unit) {
                                     DropdownMenuItem(text = { Text("Save as Markdown…") }, onClick = { if (menuOpen) { menuOpen = false; saveMarkdown.launch("$base.md") } })
                                     DropdownMenuItem(text = { Text("Save as text…") }, onClick = { if (menuOpen) { menuOpen = false; saveText.launch("$base.txt") } })
                                 }
-                                DropdownMenuItem(text = { Text("Transcribe again") }, onClick = { menuOpen = false; vm.retranscribe() })
+                                DropdownMenuItem(text = { Text("Transcribe again") }, onClick = click@{
+                                    if (!menuOpen) return@click
+                                    menuOpen = false
+                                    // Edits are lost to a new transcript: ask first.
+                                    if (done && r.editedAt != null) confirmRedo = true else vm.retranscribe()
+                                })
                                 if (r != null) DropdownMenuItem(text = { Text("Delete…", color = MaterialTheme.colorScheme.error) }, onClick = click@{
                                     if (!menuOpen) return@click
                                     menuOpen = false
@@ -229,12 +293,14 @@ fun TranscriptScreen(onBack: () -> Unit, onCallsWith: (PersonFilter) -> Unit) {
             if (r != null && done) {
                 item { SummaryBlock(r) }
                 val note = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp)
-                if (learning) item {
+                if (learningVoice) item {
                     MonoLabel("Learning your voice…", note, color = MaterialTheme.colorScheme.primary)
                 } else if (r.redoComing) item {
+                    // Changing a line by hand takes the call out of the redo, which would replace the change.
                     Text(
                         "This call will be processed again on the charger, to tell the voices apart better. " +
-                            "Choosing “Me” here labels you until then; choose it again afterwards to teach the app your voice.",
+                            "Choosing “Me” here labels you until then; choose it again afterwards to teach the app your voice. " +
+                            "If you correct a line, the call stays as it is now, without that improvement.",
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = note,
                     )
@@ -256,6 +322,13 @@ fun TranscriptScreen(onBack: () -> Unit, onCallsWith: (PersonFilter) -> Unit) {
                         )
                     }
                 }
+                if (!editTipSeen && turns.isNotEmpty()) item {
+                    Notice(
+                        "Tip", "Long-press a line to correct it.",
+                        dismiss = "Got it", onDismiss = vm::markEditTipSeen,
+                        modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 16.dp),
+                    )
+                }
                 // With each row's own 2dp, the transcript starts 14dp below what's above it.
                 item { Spacer(Modifier.height(12.dp)) }
                 if (turns.isEmpty()) item {
@@ -273,7 +346,13 @@ fun TranscriptScreen(onBack: () -> Unit, onCallsWith: (PersonFilter) -> Unit) {
                 // Keyed, so a notice appearing above (a suggestion, say) doesn't move the lines being read.
                 itemsIndexed(turns, key = { i, _ -> "turn-$i" }) { i, turn ->
                     TurnItem(turn, names, active = i == active, clockWidth = clockWidth, highlight = vm.highlight,
-                        onSpeaker = { asking = turn.speaker to r.transcribedAt }, onPlay = { playingRow = i; vm.playFrom(turn.startMs) })
+                        onSpeaker = { asking = turn.speaker to r.transcribedAt }, onPlay = { playingRow = i; vm.playFrom(turn.startMs) },
+                        menu = LineMenu.entries.filter { it != LineMenu.SPLIT || canSplit(turn) },
+                        onMenuUsed = vm::markEditTipSeen,
+                        onMenu = { action ->
+                            if (action == LineMenu.COPY) copyLine(context, turn.text)
+                            else correcting = LineAction(action, turn.segmentIds.toList(), r.transcribedAt)
+                        })
                 }
             }
         }
@@ -285,6 +364,59 @@ fun TranscriptScreen(onBack: () -> Unit, onCallsWith: (PersonFilter) -> Unit) {
                 modifier = Modifier.align(Alignment.BottomCenter),
             )
         }
+        // Above the player bar, which is 80dp over the navigation bar.
+        SnackbarHost(
+            snackbar,
+            Modifier.align(Alignment.BottomCenter)
+                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom))
+                .padding(bottom = if (showPlayer) 80.dp else 0.dp),
+        ) { Snackbar(it, Modifier.padding(12.dp)) }
+    }
+
+    if (confirmRedo) AlertDialog(
+        onDismissRequest = { confirmRedo = false },
+        title = { Text("Transcribe again?") },
+        text = { Text("Your edits to this call will be replaced. Common corrections will be applied again.") },
+        confirmButton = {
+            TextAction("Transcribe again", click@{
+                if (!confirmRedo) return@click
+                confirmRedo = false
+                vm.retranscribe()
+            })
+        },
+        dismissButton = { TextAction("Cancel", { confirmRedo = false }) },
+    )
+
+    val line = correcting
+    if (line != null && correctingTurn != null) {
+        val turn = correctingTurn
+        val close = { correcting = null }
+        when (line.action) {
+            LineMenu.EDIT -> EditTextDialog(turn.text, onSave = { vm.editText(turn, line.transcript, it) }, onDismiss = close)
+            LineMenu.SPLIT -> {
+                val lines = remember(turn, segments) { turn.segmentIds.mapNotNull { id -> segments.firstOrNull { it.id == id } } }
+                SplitDialog(
+                    words = remember(lines) { TranscriptEdits.words(lines).map { it.text } },
+                    speaker = turn.speaker, after = defaultAfter(turn, turns),
+                    choices = targetChoices(names, turns, except = null),
+                    onSplit = { at, before, after -> vm.split(turn, line.transcript, at, before, after) },
+                    onDismiss = close,
+                )
+            }
+            LineMenu.MOVE -> SpeakerChoiceDialog(
+                "Who said this?", targetChoices(names, turns, except = turn.speaker),
+                onChoose = { vm.reassign(turn, line.transcript, it); close() }, onDismiss = close,
+            )
+            LineMenu.COPY -> close()
+        }
+    }
+
+    // Made from this call: the rest of it is corrected too unless unticked, and other calls if ticked.
+    alwaysCorrect?.let { (heard, written) ->
+        CorrectionDialog(
+            rules = corrections, earlierCalls = vm::otherCallsSaying, onSave = vm::addCorrection,
+            onDismiss = { alwaysCorrect = null }, heard = heard, written = written, inThisCall = vm::linesHereSaying,
+        )
     }
 
     if (confirmDelete) rec?.let { r ->
@@ -339,6 +471,8 @@ fun TranscriptScreen(onBack: () -> Unit, onCallsWith: (PersonFilter) -> Unit) {
             learnsNames = recognising && current && !names.isOwner(speaker),
             onMe = { vm.speakerIsMe(speaker, transcript) }, onNotMe = { vm.notMe(transcript) },
             onName = { vm.nameSpeaker(speaker, it, transcript) },
+            others = targetChoices(names, turns, except = speaker).filter { it.target is SpeakerTarget.Existing },
+            onMerge = { into -> vm.mergeSpeakers(speaker, into, transcript) },
             onDismiss = { asking = null },
         )
     }
@@ -353,7 +487,9 @@ private fun Header(r: Recording) {
         DateUtils.FORMAT_SHOW_DATE or DateUtils.FORMAT_SHOW_TIME or DateUtils.FORMAT_SHOW_WEEKDAY or DateUtils.FORMAT_ABBREV_ALL,
     )
     val kicker = listOfNotNull(CallText.direction(r)?.let { "$it call" } ?: "Call", date,
-        r.durationMs.takeIf { it > 0 }?.let { SegmentLogic.formatDuration(it) }).joinToString(" · ")
+        r.durationMs.takeIf { it > 0 }?.let { SegmentLogic.formatDuration(it) },
+        // Changed by hand, so no longer only what the recogniser heard.
+        "Edited".takeIf { r.editedAt != null }).joinToString(" · ")
     Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 4.dp)) {
         MonoLabel(kicker)
         Text(CallText.title(r, CallerLookup::formatNumber), style = MaterialTheme.typography.headlineMedium, color = c.onSurface,
@@ -416,6 +552,7 @@ private fun FollowUpChip(text: String) {
 @Composable
 private fun TurnItem(
     turn: Turn, names: SpeakerNames, active: Boolean, clockWidth: Dp, highlight: String?, onSpeaker: () -> Unit, onPlay: () -> Unit,
+    menu: List<LineMenu>, onMenuUsed: () -> Unit, onMenu: (LineMenu) -> Unit,
 ) {
     val c = MaterialTheme.colorScheme
     // The text searched for; the row being played is already secondaryContainer, so its marks take another colour.
@@ -426,31 +563,61 @@ private fun TurnItem(
     val text = remember(turn.text, highlight, mark) {
         highlighted(turn.text, highlight?.let { SearchMatch.occurrences(turn.text, it) }.orEmpty(), mark)
     }
+    var menuOpen by remember { mutableStateOf(false) }
+    val openMenu = { menuOpen = true }
+    // The tip about long-pressing goes once the menu has been used: when it closes, not when it opens, as the tip's
+    // card above would leave and move the line and its menu up under the finger.
+    val closeMenu = {
+        menuOpen = false
+        onMenuUsed()
+    }
     // The whole row plays from its time, so a one-word line is as easy to tap as a long one; the
     // speaker's name inside it keeps its own tap, whose 2dp padding counts towards the row's top padding.
-    Row(
-        Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp)
-            .clip(RoundedCornerShape(16.dp))
-            .background(if (active) c.secondaryContainer else Color.Transparent)
-            .clickable(onClickLabel = "Play from here", onClick = onPlay)
-            .padding(start = 8.dp, end = 8.dp, top = if (active) 8.dp else 4.dp, bottom = if (active) 10.dp else 6.dp),
-        horizontalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-        Text(SegmentLogic.formatClock(turn.startMs), style = EditorialType.clock,
-            color = if (active) c.onSecondaryContainer else c.onSurfaceVariant,
-            modifier = Modifier.width(clockWidth).padding(top = 2.dp))
-        Column(Modifier.weight(1f)) {
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(
-                    names.label(turn.speaker).uppercase(), style = EditorialType.speaker,
-                    color = speakerColor(turn.speaker, names.owner),
-                    modifier = Modifier.weight(1f, fill = false)
-                        .clip(RoundedCornerShape(4.dp)).clickable(onClick = onSpeaker).padding(vertical = 2.dp),
+    // A long-press anywhere on it, the name included, opens the line's corrections, which TalkBack offers as actions.
+    Box {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 2.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(if (active) c.secondaryContainer else Color.Transparent)
+                .combinedClickable(
+                    onClickLabel = "Play from here", onClick = onPlay,
+                    onLongClickLabel = "Edit line", onLongClick = openMenu,
                 )
-                if (active) Icon(AppIcons.Playing, contentDescription = "Playing", tint = c.primary,
-                    modifier = Modifier.padding(start = 8.dp).size(16.dp))
+                .semantics {
+                    customActions = menu.map { item -> CustomAccessibilityAction(item.label) { onMenuUsed(); onMenu(item); true } }
+                }
+                .padding(start = 8.dp, end = 8.dp, top = if (active) 8.dp else 4.dp, bottom = if (active) 10.dp else 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Text(SegmentLogic.formatClock(turn.startMs), style = EditorialType.clock,
+                color = if (active) c.onSecondaryContainer else c.onSurfaceVariant,
+                modifier = Modifier.width(clockWidth).padding(top = 2.dp))
+            Column(Modifier.weight(1f)) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(
+                        names.label(turn.speaker).uppercase(), style = EditorialType.speaker,
+                        color = speakerColor(turn.speaker, names.owner),
+                        modifier = Modifier.weight(1f, fill = false)
+                            .clip(RoundedCornerShape(4.dp))
+                            .combinedClickable(onClick = onSpeaker, onLongClickLabel = "Edit line", onLongClick = openMenu)
+                            .padding(vertical = 2.dp),
+                    )
+                    if (active) Icon(AppIcons.Playing, contentDescription = "Playing", tint = c.primary,
+                        modifier = Modifier.padding(start = 8.dp).size(16.dp))
+                }
+                Text(text, style = MaterialTheme.typography.bodyMedium, color = c.onSurface)
             }
-            Text(text, style = MaterialTheme.typography.bodyMedium, color = c.onSurface)
+        }
+        // Under the row, lined up with its text.
+        DropdownMenu(expanded = menuOpen, onDismissRequest = closeMenu, offset = DpOffset(clockWidth + 26.dp, 0.dp)) {
+            menu.forEach { item ->
+                // Checks the menu is still open: during its fade-out a quick second tap would run the item again.
+                DropdownMenuItem(text = { Text(item.label) }, onClick = click@{
+                    if (!menuOpen) return@click
+                    closeMenu()
+                    onMenu(item)
+                })
+            }
         }
     }
 }
@@ -522,9 +689,11 @@ private fun PlayerBar(
 private fun SpeakerDialog(
     speaker: Int, names: SpeakerNames, sample: String?, learnsVoice: Boolean,
     suggestion: VoiceSuggestion?, learnsNames: Boolean,
-    onMe: () -> Unit, onNotMe: () -> Unit, onName: (String) -> Unit, onDismiss: () -> Unit,
+    onMe: () -> Unit, onNotMe: () -> Unit, onName: (String) -> Unit,
+    others: List<TargetChoice>, onMerge: (Int) -> Unit, onDismiss: () -> Unit,
 ) {
     var typed by remember { mutableStateOf(names.manual[speaker].orEmpty()) }
+    var merging by remember { mutableStateOf(false) }
     val isMe = names.isOwner(speaker)
     val choices = buildList {
         suggestion?.let { s ->
@@ -542,6 +711,16 @@ private fun SpeakerDialog(
                     add(SpeakerChoice(caller, "Confirm, so Longhand recognises their voice in other calls") { onName(caller); onDismiss() })
             }
         }
+        // Speaker separation sometimes hears one person as two.
+        if (others.isNotEmpty()) add(SpeakerChoice("Same person as…", "Join their lines with another speaker's") { merging = true })
+    }
+    if (merging) {
+        SpeakerChoiceDialog(
+            "Same person as…", others,
+            onChoose = { (it as? SpeakerTarget.Existing)?.let { into -> onMerge(into.speaker) }; onDismiss() },
+            onDismiss = { merging = false },
+        )
+        return
     }
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -575,6 +754,198 @@ private fun SpeakerDialog(
 
 private class SpeakerChoice(val title: String, val detail: String, val onClick: () -> Unit)
 
-/** Made before 0.5.0 and still to be redone on the charger (a redo that failed isn't tried again). */
+/** Made before 0.5.0 and still to be redone on the charger (a redo that failed isn't tried again, nor one of a call edited by hand). */
 private val Recording.redoComing: Boolean
-    get() = status == RecordingStatus.DONE && pipeline < Pipeline.CURRENT && attempts < 3
+    get() = status == RecordingStatus.DONE && pipeline < Pipeline.CURRENT && attempts < 3 && editedAt == null
+
+/** What a line's long-press menu (and TalkBack's actions for it) offers. */
+private enum class LineMenu(val label: String) {
+    EDIT("Edit text"), SPLIT("Split line…"), MOVE("Someone else said this…"), COPY("Copy"),
+}
+
+/**
+ * A turn chosen to be corrected from its menu, by its lines, and the transcript it was shown in (a redo renumbers
+ * speakers). Serializable, so the dialog stays open when the screen rotates.
+ */
+private data class LineAction(val action: LineMenu, val segmentIds: List<Long>, val transcript: Long?) : java.io.Serializable
+
+/** One answer to "Who said this?": [title] as the speaker is shown, with a word about them. */
+class TargetChoice(val target: SpeakerTarget, val title: String, val detail: String?)
+
+/** A turn of at least two words can be split. */
+private fun canSplit(turn: Turn): Boolean = io.github.christiantwu.longhand.engine.Words.ranges(turn.text).size > 1
+
+/** The line's text on the clipboard. Android 13 and later show that it was copied; earlier ones don't. */
+private fun copyLine(context: android.content.Context, text: String) {
+    context.getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("Transcript line", text))
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) Toast.makeText(context, "Copied", Toast.LENGTH_SHORT).show()
+}
+
+/**
+ * Who the speaker choices offer: the call's speakers (except [except]), each with the start of what they said; "Me" when
+ * nobody is labelled You; the caller when nobody is shown with their name; and someone new. "Me" and the caller are new
+ * speakers too, with only the words being moved: the rest of what that person said keeps its label until named.
+ */
+private fun targetChoices(names: SpeakerNames, turns: List<Turn>, except: Int?): List<TargetChoice> = buildList {
+    val speakers = turns.map { it.speaker }.distinct().sorted()
+    for (speaker in speakers) {
+        if (speaker == except) continue
+        val said = turns.first { it.speaker == speaker }.text
+        add(TargetChoice(SpeakerTarget.Existing(speaker), names.label(speaker), "“${said.take(48)}${if (said.length > 48) "…" else ""}”"))
+    }
+    if (names.owner == null || names.owner !in speakers) add(TargetChoice(SpeakerTarget.Me, "Me",
+        "Labels just these words as you. To label all your lines, tap the name above them and choose “Me”."))
+    names.callerName?.let { caller ->
+        if (speakers.none { names.label(it) == caller }) add(TargetChoice(SpeakerTarget.Caller(caller), caller,
+            "Gives just these words to $caller. To name all their lines, tap the name above them."))
+    }
+    add(TargetChoice(SpeakerTarget.New, "New speaker", "Someone not shown in this call yet"))
+}
+
+/**
+ * Who the part after a split goes to at first: on a two-person call the other person; otherwise whoever speaks next
+ * (or before) if that's someone else, else someone new.
+ */
+private fun defaultAfter(turn: Turn, turns: List<Turn>): SpeakerTarget {
+    val speakers = turns.map { it.speaker }.distinct()
+    if (speakers.size == 2) return SpeakerTarget.Existing(speakers.first { it != turn.speaker })
+    val i = turns.indexOfFirst { it.segmentIds == turn.segmentIds }
+    if (i < 0) return SpeakerTarget.New
+    val neighbour = turns.getOrNull(i + 1)?.speaker?.takeIf { it != turn.speaker }
+        ?: turns.getOrNull(i - 1)?.speaker?.takeIf { it != turn.speaker }
+    return neighbour?.let { SpeakerTarget.Existing(it) } ?: SpeakerTarget.New
+}
+
+/** "Edit text": the turn's words in a box to correct. */
+@Composable
+private fun EditTextDialog(text: String, onSave: (String) -> Unit, onDismiss: () -> Unit) {
+    var typed by rememberSaveable(stateSaver = TextFieldValue.Saver) { mutableStateOf(TextFieldValue(text, TextRange(text.length))) }
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) { focus.requestFocus() }
+    val changed = TranscriptEdits.clean(typed.text).let { it.isNotEmpty() && it != text }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Edit text") },
+        text = {
+            OutlinedTextField(
+                value = typed, onValueChange = { typed = it }, minLines = 3, maxLines = 10,
+                modifier = Modifier.fillMaxWidth().focusRequester(focus),
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+            )
+        },
+        confirmButton = {
+            TextAction("Save", click@{
+                if (!changed) return@click
+                onSave(typed.text)
+                onDismiss()
+            }, enabled = changed)
+        },
+        dismissButton = { TextAction("Cancel", onDismiss) },
+    )
+}
+
+/**
+ * "Split line…": who said each part, at first the turn's own [speaker] before and [after] from there on, above the turn's
+ * [words] as chips (a character each in Chinese and Japanese), so on a long turn the speakers stay in view; the word
+ * tapped starts the new part.
+ */
+@Composable
+private fun SplitDialog(
+    words: List<String>, speaker: Int, after: SpeakerTarget, choices: List<TargetChoice>,
+    onSplit: (at: Int, before: SpeakerTarget, after: SpeakerTarget) -> Unit, onDismiss: () -> Unit,
+) {
+    val c = MaterialTheme.colorScheme
+    var at by rememberSaveable { mutableStateOf(-1) }
+    var first by rememberSaveable { mutableStateOf<SpeakerTarget>(SpeakerTarget.Existing(speaker)) }
+    var second by rememberSaveable { mutableStateOf(after) }
+    // Which part's speaker is being chosen: 0 before the word, 1 from it.
+    var choosing by rememberSaveable { mutableStateOf<Int?>(null) }
+    fun label(target: SpeakerTarget) = choices.firstOrNull { it.target == target }?.title ?: "Someone else"
+    val word = words.getOrNull(at)
+    val parts = if (word != null) listOf("Before “$word”", "From “$word”") else listOf("Before the word you tap", "From the word you tap")
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Split line") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Column(verticalArrangement = Arrangement.spacedBy(GroupGap)) {
+                    // The dialog sits on surfaceContainerHigh, so the rows take the next tone up to stand out.
+                    GroupRow(groupShape(0, 2), onClick = { choosing = 0 }, onClickLabel = "Choose who said it", color = c.surfaceContainerHighest) {
+                        RowText(parts[0], label(first))
+                    }
+                    GroupRow(groupShape(1, 2), onClick = { choosing = 1 }, onClickLabel = "Choose who said it", color = c.surfaceContainerHighest) {
+                        RowText(parts[1], label(second))
+                    }
+                }
+                Text("Tap the first word of the new part.", style = MaterialTheme.typography.bodyMedium, color = c.onSurfaceVariant)
+                // One word at a time, like radio buttons.
+                FlowRow(Modifier.semantics { selectableGroup() }, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    // The first word has nothing before it to split from.
+                    words.forEachIndexed { i, w -> WordChip(w, selected = i == at, enabled = i > 0, onClick = { at = i }) }
+                }
+            }
+        },
+        confirmButton = {
+            TextAction("Split", click@{
+                if (word == null || first == second) return@click
+                onSplit(at, first, second)
+                onDismiss()
+            }, enabled = word != null && first != second)
+        },
+        dismissButton = { TextAction("Cancel", onDismiss) },
+    )
+    choosing?.let { part ->
+        SpeakerChoiceDialog(
+            parts[part], choices,
+            onChoose = { if (part == 0) first = it else second = it; choosing = null },
+            onDismiss = { choosing = null },
+        )
+    }
+}
+
+/**
+ * A word to split before: a chip that reads as a radio button (one word is chosen at a time), where Material's
+ * FilterChip would read as a checkbox.
+ */
+@Composable
+private fun WordChip(word: String, selected: Boolean, enabled: Boolean, onClick: () -> Unit) {
+    val c = MaterialTheme.colorScheme
+    val shape = RoundedCornerShape(8.dp)
+    Box(
+        Modifier.minimumInteractiveComponentSize()
+            .clip(shape)
+            .background(if (selected) c.secondaryContainer else Color.Transparent)
+            .border(1.dp, if (selected) Color.Transparent else c.outlineVariant, shape)
+            .selectable(selected = selected, enabled = enabled, role = Role.RadioButton, onClick = onClick)
+            .heightIn(min = 32.dp)
+            .padding(horizontal = 12.dp, vertical = 6.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(word, style = MaterialTheme.typography.labelLarge,
+            color = when {
+                !enabled -> c.onSurface.copy(alpha = 0.38f)
+                selected -> c.onSecondaryContainer
+                else -> c.onSurfaceVariant
+            })
+    }
+}
+
+/** "Who said this?": one of [choices]. */
+@Composable
+private fun SpeakerChoiceDialog(title: String, choices: List<TargetChoice>, onChoose: (SpeakerTarget) -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            // The dialog sits on surfaceContainerHigh, so the rows take the next tone up to stand out.
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(GroupGap)) {
+                choices.forEachIndexed { i, choice ->
+                    GroupRow(groupShape(i, choices.size), onClick = { onChoose(choice.target) }, color = MaterialTheme.colorScheme.surfaceContainerHighest) {
+                        RowText(choice.title, choice.detail)
+                    }
+                }
+            }
+        },
+        confirmButton = { TextAction("Cancel", onDismiss) },
+    )
+}
