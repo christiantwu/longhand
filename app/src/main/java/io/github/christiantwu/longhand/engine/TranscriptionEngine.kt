@@ -3,17 +3,11 @@ package io.github.christiantwu.longhand.engine
 import android.content.Context
 import android.os.SystemClock
 import android.util.Log
-import com.k2fsa.sherpa.onnx.FastClusteringConfig
 import com.k2fsa.sherpa.onnx.OfflineModelConfig
 import com.k2fsa.sherpa.onnx.OfflineRecognizer
 import com.k2fsa.sherpa.onnx.OfflineRecognizerConfig
 import com.k2fsa.sherpa.onnx.OfflineSenseVoiceModelConfig
-import com.k2fsa.sherpa.onnx.OfflineSpeakerDiarization
-import com.k2fsa.sherpa.onnx.OfflineSpeakerDiarizationConfig
-import com.k2fsa.sherpa.onnx.OfflineSpeakerSegmentationModelConfig
-import com.k2fsa.sherpa.onnx.OfflineSpeakerSegmentationPyannoteModelConfig
 import com.k2fsa.sherpa.onnx.OfflineTransducerModelConfig
-import com.k2fsa.sherpa.onnx.SpeakerEmbeddingExtractorConfig
 import io.github.christiantwu.longhand.TAG
 import java.io.Closeable
 import java.util.concurrent.CancellationException
@@ -22,8 +16,8 @@ import java.util.concurrent.CancellationException
 class TranscriptResult(val lines: List<TranscriptLine>, val voices: Map<Int, FloatArray>)
 
 /**
- * Turns decoded audio into speaker-labelled, timestamped lines:
- * diarize (who spoke when) -> merge turns -> split long turns at pauses -> Parakeet ASR.
+ * Turns decoded audio and who spoke when in it ([SpeakerSeparation]) into speaker-labelled, timestamped lines:
+ * split long turns at pauses -> recognize each piece.
  * [speech] picks the recognizer: English (Parakeet v2) or 25 European languages (v3), both NeMo
  * transducers that sherpa-onnx loads the same way, or Chinese, Japanese and Korean (SenseVoice Small),
  * all run by sherpa-onnx's offline recognizer; or Hindi (Nemotron 3.5 ASR Streaming), a streaming
@@ -40,7 +34,6 @@ class TranscriptionEngine(context: Context, speech: Models.Set) : Closeable {
 
     private val vadModel = Models.file(context, "silero_vad.onnx").absolutePath
     private val threads = 4
-    private val voiceAnalyzer = VoiceAnalyzer(context, threads = 2)
 
     /** Hindi's recognizer; the other languages use [recognizer]. */
     private val streaming = if (speech == Models.Set.HINDI) StreamingRecognizer(context, speech, threads) else null
@@ -78,44 +71,16 @@ class TranscriptionEngine(context: Context, speech: Models.Set) : Closeable {
         ),
     )
 
-    private val diarizer = OfflineSpeakerDiarization(
-        assetManager = null,
-        config = OfflineSpeakerDiarizationConfig(
-            segmentation = OfflineSpeakerSegmentationModelConfig(
-                pyannote = OfflineSpeakerSegmentationPyannoteModelConfig(
-                    model = Models.file(context, "segmentation.onnx").absolutePath,
-                ),
-                numThreads = threads,
-            ),
-            embedding = SpeakerEmbeddingExtractorConfig(
-                model = Models.file(context, "embedding.onnx").absolutePath,
-                numThreads = threads,
-            ),
-            // Deliberately loose: one person may come back as several clusters, which SpeakerResolver
-            // then joins up by voice. A fixed count let a stray fragment take a speaker's place.
-            clustering = FastClusteringConfig(numClusters = -1, threshold = CLUSTER_THRESHOLD),
-            minDurationOn = 0.3f,
-            minDurationOff = 0.5f,
-        ),
-    )
-
     /**
-     * @param owner the phone owner's voiceprint, if they've set one: keeps them a speaker of their own.
-     * @param onProgress 0..1; diarization is the first 30%, recognition the rest.
+     * @param separation who spoke when in [audio], from [SpeakerSeparation].
+     * @param onProgress [SpeakerSeparation.SHARE]..1: separation is the part before.
      * @param isStopped polled between steps; throws [CancellationException] when true.
      */
-    fun transcribe(audio: DecodedAudio, owner: FloatArray?, onProgress: (Float) -> Unit, isStopped: () -> Boolean): TranscriptResult {
-        val stereo = audio.channels.size == 2 &&
-            StereoAnalysis.channelsAreDistinct(audio.channels[0], audio.channels[1])
-        Log.i(TAG, "transcribe: ${audio.durationMs} ms, channels=${audio.channels.size}, stereoSpeakers=$stereo")
-
+    fun transcribe(audio: DecodedAudio, separation: Separation, onProgress: (Float) -> Unit, isStopped: () -> Boolean): TranscriptResult {
+        val share = SpeakerSeparation.SHARE
+        onProgress(share)
         // Speaker turns, each with the samples it is recognised from (a channel, or the mono mix).
-        val separated = if (stereo) Separated(stereoTurns(audio), emptyMap()) else monoTurns(audio.mono, owner, onProgress, isStopped)
-        val turns = separated.turns
-        // A speaker with too little clean speech for a fingerprint of their own keeps the one
-        // speaker separation made, so the owner can still be recognised among them.
-        val voices = separated.voices + voiceAnalyzer.voices(turns)
-        onProgress(0.3f)
+        val turns = separation.turnsIn(audio)
 
         // Long turns are cut at pauses into contiguous pieces, so recognition memory stays
         // bounded without dropping any audio between pieces.
@@ -135,7 +100,7 @@ class TranscriptionEngine(context: Context, speech: Models.Set) : Closeable {
             val now = SystemClock.elapsedRealtime()
             if (now - reported >= 2_000) {
                 reported = now
-                onProgress(0.3f + 0.7f * done / pieces.size)
+                onProgress(share + (1 - share) * done / pieces.size)
             }
         }
         for (group in order.chunked(batch)) {
@@ -152,62 +117,11 @@ class TranscriptionEngine(context: Context, speech: Models.Set) : Closeable {
                 }
             }
             done += group.size
-            onProgress(0.3f + 0.7f * done / pieces.size)
+            onProgress(share + (1 - share) * done / pieces.size)
         }
         lines.sortBy { it.startMs }
-        return TranscriptResult(lines, voices)
+        return TranscriptResult(lines, separation.voices)
     }
-
-    /** Speaker turns with the samples they come from, and the voices speaker separation found. */
-    private class Separated(val turns: List<Pair<Span, FloatArray>>, val voices: Map<Int, FloatArray>)
-
-    /** Who spoke when, from voice clustering over the whole call. */
-    private fun monoTurns(samples: FloatArray, owner: FloatArray?, onProgress: (Float) -> Unit, isStopped: () -> Boolean): Separated {
-        val raw = diarizer.processWithCallback(samples, DiarizationProgress(onProgress), 0L)
-            .map { Span(it.start, it.end, it.speaker) }
-        if (isStopped()) throw CancellationException()
-        // Very short or single-voice clips can come back empty; fall back to plain speech detection.
-        if (raw.isEmpty()) return Separated(SegmentLogic.merge(speechSpans(samples, 0, samples.size, speaker = 0)).map { it to samples }, emptyMap())
-
-        val fingerprints = SpeakerResolver.fingerprintPlan(raw)
-            .mapNotNull { (cluster, parts) -> voiceAnalyzer.fingerprint(samples, parts)?.let { cluster to it } }
-            .toMap()
-        val resolved = SpeakerResolver.resolve(raw, fingerprints, owner)
-        val numbered = SegmentLogic.relabelByFirstAppearance(resolved.spans)
-        val renumber = resolved.spans.zip(numbered).associate { (a, b) -> a.speaker to b.speaker }
-        Log.i(TAG, "speakers: ${raw.map { it.speaker }.distinct().size} clusters, " +
-            "${fingerprints.size} fingerprinted, ${renumber.size} people")
-        return Separated(
-            SegmentLogic.merge(numbered).map { it to samples },
-            resolved.voices.entries.mapNotNull { (speaker, v) -> renumber[speaker]?.let { it to v } }.toMap(),
-        )
-    }
-
-    /** Each side of the call on its own channel: the channel is the speaker. */
-    private fun stereoTurns(audio: DecodedAudio): List<Pair<Span, FloatArray>> {
-        val out = ArrayList<Pair<Span, FloatArray>>()
-        for (ch in 0..1) {
-            val own = audio.channels[ch]
-            val other = audio.channels[1 - ch]
-            val spans = speechSpans(own, 0, audio.sampleCount, speaker = ch).filter { span ->
-                // Drop echo/bleed: speech in this channel that is much louder in the other one.
-                val a = (span.start * SR).toInt()
-                val b = (span.end * SR).toInt()
-                StereoAnalysis.rms(own, a, b) * 2 >= StereoAnalysis.rms(other, a, b)
-            }
-            SegmentLogic.merge(spans).forEach { out += it to own }
-        }
-        return out.sortedBy { it.first.start }
-    }
-
-    /**
-     * Speech regions as spans, padded a little: speech detection reacts slightly after a word
-     * starts, and a clipped first syllable often loses the whole word.
-     */
-    private fun speechSpans(samples: FloatArray, from: Int, to: Int, speaker: Int): List<Span> =
-        speechRanges(samples, from, to).map { (a, b) ->
-            Span(maxOf(a - SpeechRanges.PAD_BEFORE, from) / SR, minOf(b + SpeechRanges.PAD_AFTER, to) / SR, speaker)
-        }
 
     /** A turn as-is, or cut in the middle of pauses when it is longer than [MAX_PIECE_SEC]. */
     private fun splitTurn(turn: Span, samples: FloatArray): List<Pair<Float, Float>> {
@@ -246,28 +160,11 @@ class TranscriptionEngine(context: Context, speech: Models.Set) : Closeable {
     override fun close() {
         recognizer?.release()
         streaming?.close()
-        diarizer.release()
-        voiceAnalyzer.close()
     }
 
     private companion object {
-        /** Diarization's clustering threshold: larger merges more; see SpeakerResolver for the rest. */
-        const val CLUSTER_THRESHOLD = 0.8f
         const val SR = MODEL_SAMPLE_RATE.toFloat()
         const val MAX_PIECE_SEC = 25f
         const val MIN_PIECE_SAMPLES = MODEL_SAMPLE_RATE / 5 // 200 ms
-    }
-}
-
-/**
- * Progress callback for diarization. sherpa-onnx's native code looks up exactly
- * `invoke(int, int, long): Integer` on the callback's class, which a Kotlin lambda (compiled
- * to a generic invokedynamic lambda) doesn't have, so this must be a real class. The
- * signature is also kept from R8 in proguard-rules.pro.
- */
-class DiarizationProgress(private val onProgress: (Float) -> Unit) : (Int, Int, Long) -> Int {
-    override fun invoke(processedChunks: Int, totalChunks: Int, arg: Long): Int {
-        if (totalChunks > 0) onProgress(0.3f * processedChunks / totalChunks)
-        return 0
     }
 }

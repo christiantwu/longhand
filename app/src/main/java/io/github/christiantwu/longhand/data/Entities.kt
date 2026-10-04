@@ -77,7 +77,7 @@ data class Recording(
      * been detected. See [detection].
      */
     val spokenLanguages: String? = null,
-    /** How much speech detection found in the call, in seconds; null until it's been detected. */
+    /** How much speech language detection found in the call, in seconds; null until it's been detected. */
     val speechSeconds: Float? = null,
     /** Detection put the transcript in [language] instead of Settings' language (not chosen by hand). */
     @ColumnInfo(defaultValue = "0") val languageDetected: Boolean = false,
@@ -85,6 +85,9 @@ data class Recording(
 
 /** What language detection found in the call; null until it's been detected. */
 val Recording.detection: CallLanguage.Detection? get() = CallLanguage.Detection.of(spokenLanguages, speechSeconds)
+
+/** Its speakers are being found while its language is detected: the worker shows that progress on the waiting call. */
+val Recording.detecting: Boolean get() = status == RecordingStatus.PENDING && progress > 0f
 
 /** Versions of the transcription pipeline. Transcripts made by an older one are redone on the charger. */
 object Pipeline {

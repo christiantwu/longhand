@@ -162,18 +162,20 @@ tests of the model, recognition took about 1.8 times as long as the European lan
    takes effect from the next recording.
    - **Detecting each call's language** (with two or more languages on the phone; on by default,
      under Settings → Transcription language): each call is transcribed in the downloaded language
-     it's in (`engine/CallLanguage.kt`). Silero VAD, set up as for transcription, finds the call's
-     speech, which is cut into 9 s pieces (a last piece of 4 s or more is kept), and Whisper base
-     names the language of the first, middle and last piece (of each, with three or fewer). A call
-     goes to another model when two of those windows (or the only one) are in its languages, or when
-     one is and the rest are English, as in a call that mixes Hindi and English; it stays when more
-     than one window is in a language no model covers, or when two other models' languages are
-     heard, unless it's two windows to one. When every window is English, the call goes to the
-     English model, the most accurate for English, though every other model transcribes English
-     too. A call with under 10 s of speech follows Settings, and so does one in a language that isn't
-     downloaded. Whisper hears Maltese as Arabic, so a Maltese call stays with Settings' language
-     too. The windows and the rule were chosen on 1,064 test calls coded like the Phone app's
-     recordings, to move a call only when that's all but certain to transcribe it better.
+     it's in (`engine/CallLanguage.kt`). The call's speech is whatever speaker separation (below)
+     hears anyone say, padded as for transcription; it also catches quieter or noisier voices that
+     Silero VAD misses on phone audio. That speech is cut into 9 s pieces (a last piece of 4 s or
+     more is kept), and Whisper base names the language of the first, middle and last piece (of
+     each, with three or fewer). A call goes to another model when two of those windows (or the only
+     one) are in its languages, or when one is and the rest are English, as in a call that mixes
+     Hindi and English; it stays when more than one window is in a language no model covers, or when
+     two other models' languages are heard, unless it's two windows to one. When every window is
+     English, the call goes to the English model, the most accurate for English, though every other
+     model transcribes English too. A call with under 10 s of speech follows Settings, and so does
+     one in a language that isn't downloaded. Whisper hears Maltese as Arabic, so a Maltese call
+     stays with Settings' language too. The windows and the rule were chosen on 1,064 test calls
+     coded like the Phone app's recordings, to move a call only when that's all but certain to
+     transcribe it better.
      Each call is detected once (and again if its file changes); one that crashes the app while
      it's detected follows Settings instead of being detected again. What was heard is kept, and the
      language is decided afresh whenever the call is transcribed, since the languages downloaded and
@@ -181,8 +183,11 @@ tests of the model, recognition took about 1.8 times as long as the European lan
      Settings without waiting. Whisper and a recognizer are never in memory together: when a call
      needs detecting, the recognizer is unloaded, up to 8 waiting calls are detected in one go (so
      a call you ask for meanwhile isn't kept waiting behind a long backlog), and Whisper is
-     released before transcription carries on. A transcript that detection put in another language
-     than Settings' says which language was heard in its header, like "JAPANESE".
+     released before transcription carries on. Speaker separation (models of about 50 MB, the same
+     for every language) stays loaded throughout, and the speakers it finds while detecting a call's
+     language are kept for transcribing it, so the slowest step isn't done twice. A transcript that
+     detection put in another language than Settings' says which language was heard in its
+     header, like "JAPANESE".
    - **Transcribe again:** with more than one language on the phone, **⋮ → Transcribe again** asks
      which to use for that call. The language picked stays with the call for its later
      transcriptions too, as long as it's on the phone (`Models.languageFor`); picking the one the
@@ -193,15 +198,16 @@ tests of the model, recognition took about 1.8 times as long as the European lan
 
    It runs as a foreground job with a progress notification, in two phases so the two model
    sets are never in memory together:
-   1. **Transcribe** each pending recording (`TranscriptionEngine`):
+   1. **Transcribe** each pending recording (`SpeakerSeparation`, then `TranscriptionEngine`):
       1. Decode to 16 kHz. Telephone audio (8 kHz) is upsampled with a windowed-sinc filter;
          linear interpolation left images above 4 kHz that hid speaker changes.
-      2. Diarize (who spoke when), deliberately split too finely (`SpeakerResolver`). Clusters
-         with enough clean speech get a voice fingerprint, and those that sound alike merge
-         into one person. A short cluster joins the closest voice, or becomes a speaker of its
-         own when it sounds unlike everyone. Fragments too short to fingerprint go to the voice
-         around them. The number of people isn't fixed, so a transferred call can have three.
-         Speakers are numbered in the order they first speak.
+      2. Diarize (who spoke when), deliberately split too finely (`SpeakerResolver`), unless it
+         was done while detecting the call's language. Clusters with enough clean speech get a
+         voice fingerprint, and those that sound alike merge into one person. A short cluster
+         joins the closest voice, or becomes a speaker of its own when it sounds unlike everyone.
+         Fragments too short to fingerprint go to the voice around them. The number of people
+         isn't fixed, so a transferred call can have three. Speakers are numbered in the order
+         they first speak.
       3. Merge each person's consecutive speech into one turn.
       4. Cut turns longer than 25 s in the middle of pauses, keeping all the audio.
       5. Recognise the text. Parakeet and SenseVoice run in sherpa-onnx's offline recognizer, one

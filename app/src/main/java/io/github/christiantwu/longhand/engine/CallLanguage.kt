@@ -82,8 +82,17 @@ object CallLanguage {
     }
 
     /**
-     * Speech ranges found by speech detection, padded as speech recognition pads them ([before], [after], within
-     * [length]) and joined where they then overlap.
+     * The speech in [spans] (seconds, such as everything diarization heard anyone say) as sample ranges in order, padded
+     * and joined ([padded]).
+     */
+    fun speech(spans: List<Span>, length: Int, before: Int = 0, after: Int = 0): List<Pair<Int, Int>> {
+        fun sample(seconds: Float) = (seconds.toDouble() * MODEL_SAMPLE_RATE).toInt()
+        return padded(spans.map { sample(it.start) to sample(it.end) }.sortedBy { it.first }, length, before, after)
+    }
+
+    /**
+     * Speech ranges in order of their start, padded as speech recognition pads them ([before], [after], within [length])
+     * and joined where they then overlap.
      */
     fun padded(ranges: List<Pair<Int, Int>>, length: Int, before: Int, after: Int): List<Pair<Int, Int>> {
         val out = ArrayList<Pair<Int, Int>>()

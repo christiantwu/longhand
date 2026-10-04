@@ -3,6 +3,7 @@ package io.github.christiantwu.longhand
 import io.github.christiantwu.longhand.engine.CallLanguage
 import io.github.christiantwu.longhand.engine.CallLanguage.Family
 import io.github.christiantwu.longhand.engine.Models
+import io.github.christiantwu.longhand.engine.Span
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -46,6 +47,18 @@ class CallLanguageTest {
             before = 3_200, after = 1_600)
         assertEquals(listOf(0 to 31_600, 56_800 to 100_000), padded)
         assertEquals(emptyList<Pair<Int, Int>>(), CallLanguage.padded(emptyList(), 100_000, 3_200, 1_600))
+    }
+
+    @Test fun theSpeechIsEverythingDiarizationHeardAnyoneSayPaddedAndJoined() {
+        // Raw segments in seconds, out of order, with two people talking at once at 2.5-3 s.
+        val raw = listOf(Span(10f, 12f, 1), Span(1f, 3f, 0), Span(2.5f, 4f, 1), Span(4.25f, 5f, 0), Span(0.125f, 0.5f, 2),
+            Span(39f, 40f, 0))
+        assertEquals(listOf(0 to 9_600, 12_800 to 81_600, 156_800 to 193_600, 620_800 to s(40)),
+            CallLanguage.speech(raw, length = s(40), before = 3_200, after = 1_600))
+        // Turns found without diarization are the speech as they are, joined where they overlap.
+        assertEquals(listOf(s(1) to s(7), s(8) to s(9)),
+            CallLanguage.speech(listOf(Span(5f, 7f, 1), Span(8f, 9f, 0), Span(1f, 3f, 0), Span(2f, 6f, 0)), length = s(10)))
+        assertEquals(emptyList<Pair<Int, Int>>(), CallLanguage.speech(emptyList(), s(10), 3_200, 1_600))
     }
 
     @Test fun aWindowOfTheJoinedSpeechIsFoundPieceByPieceInTheCall() {

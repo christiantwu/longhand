@@ -3,7 +3,7 @@
 
 The steps mirror the app:
   1. decode, and resample to 16 kHz the way engine/Resampler.kt does (Kaiser-windowed sinc)
-  2. diarize like engine/TranscriptionEngine.kt (pyannote segmentation 3.0 + TitaNet,
+  2. diarize like engine/SpeakerSeparation.kt (pyannote segmentation 3.0 + TitaNet,
      over-clustered with FastClustering threshold 0.8)
   3. fingerprint and resolve the clusters into people like engine/SpeakerResolver.kt
   4. merge each person's consecutive speech like SegmentLogic.merge
@@ -92,7 +92,7 @@ def resample(x, in_rate, out_rate=SR, max_phases=4096, beta=8.0):
     return out
 
 
-# ---- 2. diarization (engine/TranscriptionEngine.kt) ----
+# ---- 2. diarization (engine/SpeakerSeparation.kt) ----
 
 def diarizer(models):
     return sherpa_onnx.OfflineSpeakerDiarization(sherpa_onnx.OfflineSpeakerDiarizationConfig(

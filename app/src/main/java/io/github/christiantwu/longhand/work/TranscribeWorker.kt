@@ -18,6 +18,8 @@ import io.github.christiantwu.longhand.data.detection
 import io.github.christiantwu.longhand.engine.AudioDecoder
 import io.github.christiantwu.longhand.engine.LanguageDetector
 import io.github.christiantwu.longhand.engine.Models
+import io.github.christiantwu.longhand.engine.Separation
+import io.github.christiantwu.longhand.engine.SpeakerSeparation
 import io.github.christiantwu.longhand.engine.Summarizer
 import io.github.christiantwu.longhand.engine.TranscriptionEngine
 import io.github.christiantwu.longhand.engine.VoiceMath
@@ -43,8 +45,9 @@ import java.util.concurrent.CancellationException
  * loaded once), then every transcript waiting for a summary is summarized (summary model loaded
  * once), then, on the charger, transcripts made by an older pipeline are redone. Before a call's
  * language is detected, the calls waiting for that are detected a few at a time, with the recognizer
- * unloaded. No two of these models are ever in memory together, and new calls always go before
- * redone ones. Runs as a foreground job so Android doesn't stop it after 10 minutes.
+ * unloaded. No two of these models are ever in memory together (speaker separation, small and the
+ * same for every language, stays loaded beside them for the whole pass), and new calls always go
+ * before redone ones. Runs as a foreground job so Android doesn't stop it after 10 minutes.
  */
 class TranscribeWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
 
@@ -133,6 +136,16 @@ class TranscribeWorker(context: Context, params: WorkerParameters) : CoroutineWo
         val done = ArrayList<Long>()
         var engine: TranscriptionEngine? = null
         var engineFiles: List<String>? = null
+        // Loaded once for the pass, the first time it's needed, whatever languages the calls are in.
+        val separator = lazy {
+            val t = SystemClock.elapsedRealtime()
+            SpeakerSeparation(applicationContext).also {
+                Log.i(TAG, "speaker separation loaded in ${SystemClock.elapsedRealtime() - t} ms")
+            }
+        }
+        // Speakers found in calls while their languages were detected, so transcribing them doesn't find them again.
+        // Room for one backlog batch and a batch of calls asked for meanwhile, which goes first.
+        val separated = SeparationCache(2 * DETECT_BATCH)
         // Calls whose language detection was tried in this pass, whether it found anything or not: each is tried once.
         val detectionTried = HashSet<Long>()
         try {
@@ -152,8 +165,7 @@ class TranscribeWorker(context: Context, params: WorkerParameters) : CoroutineWo
                     engine?.close()
                     engine = null
                     val calls = if (redo) listOf(rec) else detectionBatch(rec, dao.pendingToDetect(since(), DETECT_BATCH), detectionTried)
-                    detectionTried += calls.map { it.id }
-                    detectLanguages(calls)
+                    detectionTried += detectLanguages(calls, { separator.value }, separated)
                     continue
                 }
                 // Chosen afresh for every recording: the call's own language if one was chosen for it, else the one
@@ -175,22 +187,33 @@ class TranscribeWorker(context: Context, params: WorkerParameters) : CoroutineWo
                 } ?: break
                 // Read for every call: the owner may confirm their voice while a long batch runs.
                 val profile = VoiceProfile(applicationContext).load()
-                if (transcribe(rec, engine!!, pick.language, pick.detected, profile, summariesOn(), redo)) done += rec.id
+                val kept = separated.take(rec, profile)
+                if (kept != null) Log.i(TAG, "${rec.displayName}: speakers found while detecting its language")
+                if (transcribe(rec, engine!!, separator.value, kept, pick.language, pick.detected, profile, summariesOn(), redo)) done += rec.id
             }
         } finally {
             engine?.close()
+            if (separator.isInitialized()) separator.value.close()
         }
         return done
     }
 
     /**
      * Detects the language of each of [calls], with Whisper loaded once and released after, and stores what it found
-     * (Recording.spokenLanguages). The recognizer lock is held while the model loads and while each call is detected,
-     * so its files can't be deleted underneath it; once detection is turned off or a language removed, it stops, and
-     * the calls left follow Settings.
+     * (Recording.spokenLanguages). Whisper goes by the speech that speaker separation ([loadSeparator]) finds, and the
+     * speakers it finds are kept in [separated] for transcribing the call. The recognizer lock is held while the model
+     * loads and while each call is detected, so its files can't be deleted underneath it; once detection is turned off
+     * or a language removed, it stops, and the calls left follow Settings.
      */
-    private suspend fun detectLanguages(calls: List<Recording>) {
-        if (calls.isEmpty()) return
+    /**
+     * Detects the language of [calls], keeping the speakers found in [separated]. @return the calls tried: all of them, or
+     * those started before a call asked for came up (finding speakers takes a while, and it goes first).
+     */
+    private suspend fun detectLanguages(
+        calls: List<Recording>, loadSeparator: () -> SpeakerSeparation, separated: SeparationCache,
+    ): List<Long> {
+        if (calls.isEmpty()) return emptyList()
+        val tried = ArrayList<Long>()
         showProgress("Loading language detection…", null)
         suspend fun available() = Models.canDetect(applicationContext, Settings(applicationContext).current().detectLanguage)
         // Each call is marked before any native work on it (RecordingDao.startDetection), the first before Whisper even
@@ -199,6 +222,7 @@ class TranscribeWorker(context: Context, params: WorkerParameters) : CoroutineWo
         var current: Recording? = null
         suspend fun start(rec: Recording) {
             current = rec
+            tried += rec.id
             dao.startDetection(rec.id, rec.sizeBytes, rec.lastModified)
         }
         var detector: LanguageDetector? = null
@@ -207,35 +231,69 @@ class TranscribeWorker(context: Context, params: WorkerParameters) : CoroutineWo
             val t = SystemClock.elapsedRealtime()
             val lid = Models.recognizerLock.withLock {
                 // Checked again with the lock held: sherpa-onnx ends the app on a Whisper file that isn't the right one.
-                if (!available()) return
+                if (!available()) return calls.map { it.id }
                 try {
                     LanguageDetector(applicationContext)
                 } catch (e: Throwable) {
                     // These calls are transcribed in Settings' language instead.
                     Log.e(TAG, "language detection failed to load", e)
-                    return
+                    return calls.map { it.id }
                 }
             }
             detector = lid
             Log.i(TAG, "language detection loaded in ${SystemClock.elapsedRealtime() - t} ms, for ${calls.size} calls")
+            val separator = loadSeparator()
+            val ids = calls.map { it.id }.toSet()
             for (rec in calls) {
                 if (isStopped || pausedForCall()) break
-                showProgress("${CallText.title(rec, format)} · detecting the language", null)
+                // A call asked for meanwhile goes first: the rest of a backlog batch waits for a later turn.
+                if (rec !== calls.first() && !calls.first().requested &&
+                    dao.nextPending(since())?.let { it.requested && it.id !in ids } == true) break
+                val name = CallText.title(rec, format)
+                showProgress("$name · detecting the language", null)
                 start(rec)
                 val started = SystemClock.elapsedRealtime()
+                // Set when the call is deleted while its speakers are found: the work on it stops there.
+                var deleted = false
                 try {
-                    val samples = AudioDecoder.decode(applicationContext, rec.documentUri.toUri()).mono
-                    val found = Models.recognizerLock.withLock { if (available()) lid.detect(samples) else null } ?: break
+                    val audio = AudioDecoder.decode(applicationContext, rec.documentUri.toUri())
+                    // Read for every call, as transcription does: the speakers are kept for it only with the same voiceprint.
+                    val owner = VoiceProfile(applicationContext).load()
+                    var lastShown = -1
+                    val separation = separator.separate(
+                        audio,
+                        owner,
+                        onProgress = { p ->
+                            val pct = (p / SpeakerSeparation.SHARE * 100).toInt()
+                            if (pct != lastShown) {
+                                lastShown = pct
+                                // Called from inside native code on this thread, as in transcribe().
+                                runBlocking {
+                                    // Shown on the call's row while it waits (RecordingsScreen); 0 again once detected.
+                                    deleted = dao.setProgress(rec.id, pct / 100f) == 0
+                                    showProgress("$name · detecting the language", pct / 100f)
+                                }
+                            }
+                        },
+                        isStopped = { isStopped || deleted },
+                    )
+                    separated.put(rec, owner, separation)
+                    val found = Models.recognizerLock.withLock {
+                        if (available()) lid.detect(audio.mono, separation.speech) else null
+                    } ?: break
                     dao.setDetection(rec.id, found.stored, found.speechSeconds, rec.sizeBytes, rec.lastModified)
                     Log.i(TAG, "${rec.displayName}: languages ${found.codes} in %.1f s of speech, took %d ms"
                         .format(found.speechSeconds, SystemClock.elapsedRealtime() - started))
                 } catch (e: CancellationException) {
-                    throw e
+                    if (!deleted) throw e
+                    Log.i(TAG, "${rec.displayName} was deleted while its language was being detected")
                 } catch (e: Exception) {
                     // Transcribed in Settings' language; transcribing it reports what's wrong with the recording, if anything.
                     Log.w(TAG, "language detection failed for ${rec.displayName}", e)
                 } catch (e: OutOfMemoryError) {
                     Log.w(TAG, "out of memory detecting the language of ${rec.displayName}", e)
+                } finally {
+                    withContext(NonCancellable) { dao.setProgress(rec.id, 0f) }
                 }
                 current = null
             }
@@ -243,17 +301,19 @@ class TranscribeWorker(context: Context, params: WorkerParameters) : CoroutineWo
             detector?.close()
             current?.let { withContext(NonCancellable) { dao.interruptDetection(it.id) } }
         }
+        return tried
     }
 
     /**
      * A [redo] leaves the recording DONE, so its old transcript stays on show until the new one
      * replaces it, and if the redo fails the old transcript simply stays. [engine] transcribes in [language], which
-     * was [detected] in the call or not.
+     * was [detected] in the call or not, with the speakers [separated] while its language was detected, if they were,
+     * else the ones [separator] finds now.
      * @return true when a transcript was saved.
      */
     private suspend fun transcribe(
-        rec: Recording, engine: TranscriptionEngine, language: Models.Language, detected: Boolean, profile: FloatArray?,
-        summarize: Boolean, redo: Boolean,
+        rec: Recording, engine: TranscriptionEngine, separator: SpeakerSeparation, separated: Separation?,
+        language: Models.Language, detected: Boolean, profile: FloatArray?, summarize: Boolean, redo: Boolean,
     ): Boolean {
         if (redo) dao.startRedo(rec.id) else dao.markProcessing(rec.id)
         val name = CallText.title(rec, format)
@@ -264,23 +324,23 @@ class TranscribeWorker(context: Context, params: WorkerParameters) : CoroutineWo
         return try {
             val audio = AudioDecoder.decode(applicationContext, rec.documentUri.toUri())
             var lastShown = -1
-            val result = engine.transcribe(
-                audio,
-                owner = profile,
-                onProgress = { p ->
-                    val pct = (p * 100).toInt()
-                    if (pct != lastShown) {
-                        lastShown = pct
-                        // Called from inside native code on this thread; the DB and
-                        // notification updates are quick, so blocking briefly is fine.
-                        runBlocking {
-                            deleted = dao.setProgress(rec.id, p) == 0
-                            showProgress("$name · $pct%", p)
-                        }
+            val onProgress: (Float) -> Unit = { p ->
+                val pct = (p * 100).toInt()
+                if (pct != lastShown) {
+                    lastShown = pct
+                    // Called from inside native code on this thread; the DB and
+                    // notification updates are quick, so blocking briefly is fine.
+                    runBlocking {
+                        deleted = dao.setProgress(rec.id, p) == 0
+                        showProgress("$name · $pct%", p)
                     }
-                },
-                isStopped = { isStopped || deleted },
-            )
+                }
+            }
+            val stopped = { isStopped || deleted }
+            // With the speakers found while its language was detected, progress starts at 30%.
+            // Kept from detection only for the same audio: a file rewritten in place since then is separated again.
+            val separation = separated?.takeIf { it.matches(audio) } ?: separator.separate(audio, profile, onProgress, stopped)
+            val result = engine.transcribe(audio, separation, onProgress, stopped)
             val owner = profile?.let { VoiceMath.pickOwner(it, result.voices) }
             val elapsed = SystemClock.elapsedRealtime() - started
             // What the recogniser wrote, with its word timings: common corrections are applied as it's saved, with the
@@ -434,6 +494,31 @@ class TranscribeWorker(context: Context, params: WorkerParameters) : CoroutineWo
         fun detectionBatch(next: Recording, waiting: List<Recording>, tried: Set<Long>): List<Recording> =
             (listOf(next) + waiting.filter { !next.requested || it.requested })
                 .distinctBy { it.id }.filter { it.id !in tried }.take(DETECT_BATCH)
+    }
+}
+
+/**
+ * The speakers found in calls while their languages were detected ([Separation]), kept for transcribing the calls later
+ * in the same pass. A call's are used once, and only while its file is unchanged and the owner's voiceprint is the same:
+ * telling the speakers apart keeps the owner a speaker of their own. It holds at most [capacity] calls, the oldest going
+ * first.
+ */
+class SeparationCache(private val capacity: Int) {
+
+    private class Kept(val sizeBytes: Long, val lastModified: Long, val owner: FloatArray?, val separation: Separation)
+
+    private val kept = LinkedHashMap<Long, Kept>()
+
+    fun put(rec: Recording, owner: FloatArray?, separation: Separation) {
+        kept.remove(rec.id)
+        kept[rec.id] = Kept(rec.sizeBytes, rec.lastModified, owner, separation)
+        while (kept.size > capacity) kept.remove(kept.keys.first())
+    }
+
+    /** [rec]'s speakers, if they still hold with the owner's voiceprint [owner]; no longer kept either way. */
+    fun take(rec: Recording, owner: FloatArray?): Separation? {
+        val k = kept.remove(rec.id) ?: return null
+        return k.separation.takeIf { k.sizeBytes == rec.sizeBytes && k.lastModified == rec.lastModified && k.owner contentEquals owner }
     }
 }
 

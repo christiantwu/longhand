@@ -65,6 +65,7 @@ import io.github.christiantwu.longhand.data.CallerLookup
 import io.github.christiantwu.longhand.data.Recording
 import io.github.christiantwu.longhand.data.RecordingStatus
 import io.github.christiantwu.longhand.data.SummaryStatus
+import io.github.christiantwu.longhand.data.detecting
 import io.github.christiantwu.longhand.engine.SegmentLogic
 import io.github.christiantwu.longhand.export.CallText
 import io.github.christiantwu.longhand.export.SearchMatch
@@ -154,7 +155,9 @@ fun RecordingsScreen(vm: AppViewModel, onOpen: (id: Long, at: Long?, q: String?)
                 }
                 // From every call: "Transcribe now" acts on all waiting calls, whatever is searched or filtered.
                 val pending = allRows.filter { it.rec.status == RecordingStatus.PENDING }
-                val busy = allRows.any { it.rec.status == RecordingStatus.PROCESSING || it.rec.summaryStatus == SummaryStatus.PROCESSING }
+                val busy = allRows.any {
+                    it.rec.status == RecordingStatus.PROCESSING || it.rec.detecting || it.rec.summaryStatus == SummaryStatus.PROCESSING
+                }
                 if (device.loaded && pending.isNotEmpty() && !busy && speechReady) {
                     val older = if (device.charging) 0 else pending.count { it.rec.lastModified < cutoff }
                     Notice(
@@ -274,6 +277,7 @@ private fun subtitle(row: CallRow): Pair<String, Color> {
     val rec = row.rec
     return when {
         rec.status == RecordingStatus.PROCESSING -> "Transcribing · ${(rec.progress * 100).toInt()}%" to c.primary
+        rec.detecting -> "Detecting the language · ${(rec.progress * 100).toInt()}%" to c.primary
         rec.status == RecordingStatus.PENDING -> "Waiting to transcribe" to c.onSurfaceVariant
         rec.status == RecordingStatus.FAILED -> "Couldn't transcribe" to c.error
         rec.status == RecordingStatus.SKIPPED -> "Not transcribed" to c.onSurfaceVariant

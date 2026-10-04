@@ -4,7 +4,10 @@ import com.k2fsa.sherpa.onnx.SileroVadModelConfig
 import com.k2fsa.sherpa.onnx.Vad
 import com.k2fsa.sherpa.onnx.VadModelConfig
 
-/** Speech detection (Silero VAD) as transcription uses it; language detection finds a call's speech the same way. */
+/**
+ * Speech detection (Silero VAD): finds the pauses long turns are cut at, and the speech of a call that diarization finds
+ * nobody in, or of each side of a stereo recording with one on each channel.
+ */
 object SpeechRanges {
     const val WINDOW = 512
     /** Padding around detected speech: detection reacts slightly after a word starts. */

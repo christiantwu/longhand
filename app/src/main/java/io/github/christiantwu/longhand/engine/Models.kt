@@ -193,7 +193,7 @@ object Models {
 
     fun fileInUse(context: Context, f: ModelFile): File = file(context, pathInUse(f, sizes(context)))
 
-    /** Every file a [TranscriptionEngine] for [set] would load now; a change means it should load again. */
+    /** Every file transcribing with [set] would load now; a change means its [TranscriptionEngine] should load again. */
     fun filesInUse(set: Set, sizes: Sizes): List<String> = set.files.map { pathInUse(it, sizes) }
 
     fun filesInUse(context: Context, set: Set): List<String> = filesInUse(set, sizes(context))

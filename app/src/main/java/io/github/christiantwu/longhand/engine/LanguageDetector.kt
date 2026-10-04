@@ -13,8 +13,6 @@ import java.io.Closeable
  */
 class LanguageDetector(context: Context) : Closeable {
 
-    private val vadModel = Models.file(context, "silero_vad.onnx").absolutePath
-
     private val lid = Models.Set.LANGUAGE_ID.files.let { (encoder, decoder) ->
         SpokenLanguageIdentification(
             assetManager = null,
@@ -32,12 +30,10 @@ class LanguageDetector(context: Context) : Closeable {
     }
 
     /**
-     * What language the call in [samples] (16 kHz mono) is in. Only its speech counts, found as transcription finds it;
-     * with too little of it to go by, no window is identified.
+     * What language the call in [samples] (16 kHz mono) is in. Only its [speech] counts (sample ranges in order, as
+     * [Separation.speech] has them); with too little of it to go by, no window is identified.
      */
-    fun detect(samples: FloatArray): CallLanguage.Detection {
-        val speech = CallLanguage.padded(SpeechRanges.find(vadModel, samples, 0, samples.size), samples.size,
-            SpeechRanges.PAD_BEFORE, SpeechRanges.PAD_AFTER)
+    fun detect(samples: FloatArray, speech: List<Pair<Int, Int>>): CallLanguage.Detection {
         val total = speech.sumOf { (a, b) -> b - a }
         val seconds = total.toFloat() / MODEL_SAMPLE_RATE
         if (seconds < CallLanguage.MIN_SPEECH_SECONDS) return CallLanguage.Detection(emptyList(), seconds)
