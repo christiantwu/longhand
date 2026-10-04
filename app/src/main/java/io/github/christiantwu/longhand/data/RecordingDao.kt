@@ -9,6 +9,7 @@ import androidx.room.Transaction
 import androidx.room.Update
 import androidx.room.Upsert
 import io.github.christiantwu.longhand.engine.Corrections
+import io.github.christiantwu.longhand.engine.Models
 import io.github.christiantwu.longhand.engine.VoiceMath
 import kotlinx.coroutines.flow.Flow
 
@@ -166,6 +167,10 @@ interface RecordingDao {
     @Query("UPDATE recordings SET editedAt = NULL WHERE id = :id")
     suspend fun forgetEdits(id: Long)
 
+    /** The language chosen for this call in "Transcribe again"; null: it follows Settings. */
+    @Query("UPDATE recordings SET pinnedLanguage = :language WHERE id = :id")
+    suspend fun setPinnedLanguage(id: Long, language: Models.Language?)
+
     /** Queue again from scratch (manual retry, or the file changed). */
     @Query("UPDATE recordings SET status = 'PENDING', progress = 0, attempts = 0, error = NULL WHERE id IN (:ids)")
     suspend fun requeue(ids: List<Long>)
@@ -210,6 +215,7 @@ interface RecordingDao {
     @Query(
         """UPDATE recordings SET status = 'DONE', progress = 1, error = NULL, attempts = 0, durationMs = :durationMs,
            transcribedAt = :at, processingMs = :processingMs, ownerSpeaker = :ownerSpeaker, ownerManual = 0, editedAt = NULL,
+           language = :language,
            topic = CASE WHEN :keepSummary THEN topic ELSE NULL END,
            summary = CASE WHEN :keepSummary THEN summary ELSE NULL END,
            followUps = CASE WHEN :keepSummary THEN followUps ELSE NULL END,
@@ -218,12 +224,12 @@ interface RecordingDao {
            requested = CASE WHEN :summaryStatus = 'PENDING' THEN requested ELSE 0 END WHERE id = :id"""
     )
     suspend fun markDone(
-        id: Long, durationMs: Long, at: Long, processingMs: Long, ownerSpeaker: Int?, summaryStatus: SummaryStatus,
-        keepSummary: Boolean, pipeline: Int, redo: Boolean,
+        id: Long, durationMs: Long, at: Long, processingMs: Long, ownerSpeaker: Int?, language: Models.Language,
+        summaryStatus: SummaryStatus, keepSummary: Boolean, pipeline: Int, redo: Boolean,
     )
 
     /**
-     * Stores a finished transcript with its speakers' voice fingerprints, and queues a new summary
+     * Stores a finished transcript, made in [language], with its speakers' voice fingerprints, and queues a new summary
      * when [summarize] is true. [segments] say what the recogniser wrote; common corrections are
      * applied here, keeping that as Segment.recognized. Speakers are numbered afresh, so names given
      * to the previous transcript's speakers are dropped, and so are their links to known voices and
@@ -241,11 +247,16 @@ interface RecordingDao {
         durationMs: Long,
         processingMs: Long,
         ownerSpeaker: Int?,
+        language: Models.Language,
+        pinned: Models.Language?,
         summarize: Boolean,
         redo: Boolean = false,
     ): Boolean {
         // Deleted while it was being transcribed: nothing to save it to.
         val rec = get(id) ?: return false
+        // Given another language while this ran ([pinned] is the one it started with): "Transcribe again" queued it
+        // again, and that run, in the language chosen, is the one to keep.
+        if (rec.pinnedLanguage != pinned) return false
         // A redo leaves the transcript on show, where it can be edited while the redo runs: the edits win.
         if (redo && rec.editedAt != null) return false
         // The rules as they are in this transaction: one removed before it isn't applied, and the job putting back a
@@ -259,7 +270,7 @@ interface RecordingDao {
         deleteVoiceSamples(id)
         deleteVoiceRejections(id)
         deleteUnusedKnownVoices()
-        markDone(id, durationMs, System.currentTimeMillis(), processingMs, ownerSpeaker,
+        markDone(id, durationMs, System.currentTimeMillis(), processingMs, ownerSpeaker, language,
             if (summarize && segments.isNotEmpty()) SummaryStatus.PENDING else SummaryStatus.NONE,
             keepSummary = redo && segments.isNotEmpty(), pipeline = Pipeline.CURRENT, redo = redo)
         return true

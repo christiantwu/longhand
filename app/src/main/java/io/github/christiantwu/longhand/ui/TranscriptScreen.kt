@@ -50,6 +50,7 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarDuration
@@ -96,6 +97,7 @@ import io.github.christiantwu.longhand.data.Pipeline
 import io.github.christiantwu.longhand.data.Recording
 import io.github.christiantwu.longhand.data.RecordingStatus
 import io.github.christiantwu.longhand.data.SummaryStatus
+import io.github.christiantwu.longhand.engine.Models
 import io.github.christiantwu.longhand.engine.SegmentLogic
 import io.github.christiantwu.longhand.engine.TranscriptEdits
 import io.github.christiantwu.longhand.engine.VoiceProfile
@@ -162,6 +164,7 @@ fun TranscriptScreen(onBack: () -> Unit, onCallsWith: (PersonFilter) -> Unit) {
         if (correcting != null && correctingTurn == null && turns.isNotEmpty()) correcting = null
     }
     var confirmRedo by remember { mutableStateOf(false) }
+    var transcribeAgain by remember { mutableStateOf<TranscribeAgain.Offer?>(null) }
     // "Always correct this?" was accepted: the correction, to confirm in its dialog.
     var alwaysCorrect by rememberSaveable { mutableStateOf<Pair<String, String>?>(null) }
 
@@ -273,8 +276,16 @@ fun TranscriptScreen(onBack: () -> Unit, onCallsWith: (PersonFilter) -> Unit) {
                                 DropdownMenuItem(text = { Text("Transcribe again") }, onClick = click@{
                                     if (!menuOpen) return@click
                                     menuOpen = false
-                                    // Edits are lost to a new transcript: ask first.
-                                    if (done && r.editedAt != null) confirmRedo = true else vm.retranscribe()
+                                    scope.launch {
+                                        val offer = vm.transcribeAgainOffer()
+                                        when {
+                                            // With several languages on the phone, one dialog asks which, and warns of edits.
+                                            offer != null -> transcribeAgain = offer
+                                            // Edits are lost to a new transcript: ask first.
+                                            done && r.editedAt != null -> confirmRedo = true
+                                            else -> vm.retranscribe()
+                                        }
+                                    }
                                 })
                                 if (r != null) DropdownMenuItem(text = { Text("Delete…", color = MaterialTheme.colorScheme.error) }, onClick = click@{
                                     if (!menuOpen) return@click
@@ -386,6 +397,18 @@ fun TranscriptScreen(onBack: () -> Unit, onCallsWith: (PersonFilter) -> Unit) {
         },
         dismissButton = { TextAction("Cancel", { confirmRedo = false }) },
     )
+
+    transcribeAgain?.let { offer ->
+        TranscribeAgainDialog(
+            offer, edited = done && r?.editedAt != null,
+            onTranscribe = click@{ language ->
+                if (transcribeAgain == null) return@click
+                transcribeAgain = null
+                vm.retranscribe(language)
+            },
+            onDismiss = { transcribeAgain = null },
+        )
+    }
 
     val line = correcting
     if (line != null && correctingTurn != null) {
@@ -928,6 +951,45 @@ private fun WordChip(word: String, selected: Boolean, enabled: Boolean, onClick:
                 else -> c.onSurfaceVariant
             })
     }
+}
+
+/**
+ * "Transcribe again" with more than one language on the phone: which one to transcribe the call in. With [edited], it
+ * also says the edits will be replaced, so that's one dialog, not two.
+ */
+@Composable
+private fun TranscribeAgainDialog(
+    offer: TranscribeAgain.Offer, edited: Boolean, onTranscribe: (Models.Language) -> Unit, onDismiss: () -> Unit,
+) {
+    val c = MaterialTheme.colorScheme
+    var picked by remember(offer) { mutableStateOf(offer.preselected) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Transcribe again") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                if (edited) Text("Your edits to this call will be replaced. Common corrections will be applied again.")
+                // The dialog sits on surfaceContainerHigh, so the rows take the next tone up to stand out.
+                Column(Modifier.semantics { selectableGroup() }, verticalArrangement = Arrangement.spacedBy(GroupGap)) {
+                    offer.languages.forEachIndexed { i, language ->
+                        val selected = language == picked
+                        GroupRow(
+                            groupShape(i, offer.languages.size), color = c.surfaceContainerHighest,
+                            action = Modifier.selectable(selected = selected, role = Role.RadioButton, onClick = { picked = language }),
+                        ) {
+                            RadioButton(selected = selected, onClick = null)
+                            RowText(languageName(language))
+                        }
+                    }
+                }
+                if (offer.languages.size < Models.Language.entries.size) {
+                    Text("Other languages can be downloaded in Settings.", style = MaterialTheme.typography.bodySmall, color = c.onSurfaceVariant)
+                }
+            }
+        },
+        confirmButton = { TextAction("Transcribe", { onTranscribe(picked) }) },
+        dismissButton = { TextAction("Cancel", onDismiss) },
+    )
 }
 
 /** "Who said this?": one of [choices]. */

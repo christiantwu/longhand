@@ -138,27 +138,26 @@ class TranscribeWorker(context: Context, params: WorkerParameters) : CoroutineWo
                         !(summariesWaiting() && dao.requestedCount() > 0) -> dao.nextRedo()
                     else -> null
                 } ?: break
-                // Chosen afresh for every recording: a language chosen or finished downloading meanwhile, or an improved
-                // model file, takes over at once, instead of the old one carrying on through a long backlog.
+                // Chosen afresh for every recording: the call's own language if one was chosen for it, else Settings'. A
+                // language chosen or finished downloading meanwhile, or an improved model file, takes over at once,
+                // instead of the old one carrying on through a long backlog.
                 val settings = Settings(applicationContext).current()
-                val loaded = Models.recognizerLock.withLock {
-                    val speech = Models.recognizer(applicationContext, settings.language.set, settings.previousLanguage?.set)
-                        ?: return@withLock false
-                    val files = Models.filesInUse(applicationContext, speech)
-                    if (engine == null || files != engineFiles) {
+                val language = Models.recognizerLock.withLock {
+                    val pick = Models.engineFor(rec.pinnedLanguage, settings.language, settings.previousLanguage,
+                        engineFiles.takeIf { engine != null }, Models.sizes(applicationContext)) ?: return@withLock null
+                    if (pick.reload) {
                         engine?.close() // never two engines in memory
                         engine = null
                         val t = SystemClock.elapsedRealtime()
-                        engine = TranscriptionEngine(applicationContext, speech)
-                        engineFiles = files
-                        Log.i(TAG, "speech models ($speech, ${files.first()}) loaded in ${SystemClock.elapsedRealtime() - t} ms")
+                        engine = TranscriptionEngine(applicationContext, pick.language.set)
+                        engineFiles = pick.files
+                        Log.i(TAG, "speech models (${pick.language.set}, ${pick.files.first()}) loaded in ${SystemClock.elapsedRealtime() - t} ms")
                     }
-                    true
-                }
-                if (!loaded) break
+                    pick.language
+                } ?: break
                 // Read for every call: the owner may confirm their voice while a long batch runs.
                 val profile = VoiceProfile(applicationContext).load()
-                if (transcribe(rec, engine!!, profile, summariesOn(), redo)) done += rec.id
+                if (transcribe(rec, engine!!, language, profile, summariesOn(), redo)) done += rec.id
             }
         } finally {
             engine?.close()
@@ -168,10 +167,12 @@ class TranscribeWorker(context: Context, params: WorkerParameters) : CoroutineWo
 
     /**
      * A [redo] leaves the recording DONE, so its old transcript stays on show until the new one
-     * replaces it, and if the redo fails the old transcript simply stays.
+     * replaces it, and if the redo fails the old transcript simply stays. [engine] transcribes in [language].
      * @return true when a transcript was saved.
      */
-    private suspend fun transcribe(rec: Recording, engine: TranscriptionEngine, profile: FloatArray?, summarize: Boolean, redo: Boolean): Boolean {
+    private suspend fun transcribe(
+        rec: Recording, engine: TranscriptionEngine, language: Models.Language, profile: FloatArray?, summarize: Boolean, redo: Boolean,
+    ): Boolean {
         if (redo) dao.startRedo(rec.id) else dao.markProcessing(rec.id)
         val name = CallText.title(rec, format)
         showProgress("$name · decoding audio", null)
@@ -213,13 +214,16 @@ class TranscribeWorker(context: Context, params: WorkerParameters) : CoroutineWo
                 durationMs = audio.durationMs,
                 processingMs = elapsed,
                 ownerSpeaker = owner,
+                language = language,
+                pinned = rec.pinnedLanguage,
                 summarize = summarize,
                 redo = redo,
             )
             if (!saved) {
-                // Deleted meanwhile, or (a redo) edited by hand while it ran: the edits stay, and the redo isn't counted.
+                // Deleted meanwhile, given another language (queued again in it), or (a redo) edited by hand while it
+                // ran: the edits stay, and the redo isn't counted.
                 if (redo) dao.interruptRedo(rec.id)
-                Log.i(TAG, "${rec.displayName} wasn't saved: ${if (redo) "edited or deleted" else "deleted"} meanwhile")
+                Log.i(TAG, "${rec.displayName} wasn't saved: ${if (redo) "edited, " else ""}deleted or given another language meanwhile")
                 return false
             }
             Log.i(TAG, "${if (redo) "redone" else "done"} ${rec.displayName}: ${result.lines.size} lines, ${result.voices.size} voices, owner=$owner, " +

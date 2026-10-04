@@ -12,7 +12,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         Recording::class, Segment::class, SpeakerName::class, SpeakerVoice::class,
         KnownVoice::class, VoiceSample::class, VoiceRejection::class, Correction::class,
     ],
-    version = 4,
+    version = 5,
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun recordings(): RecordingDao
@@ -24,7 +24,7 @@ abstract class AppDatabase : RoomDatabase() {
 
         fun get(context: Context): AppDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, "transcripts.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                 .build().also { instance = it }
         }
 
@@ -90,6 +90,17 @@ abstract class AppDatabase : RoomDatabase() {
                         "`heardKey` TEXT NOT NULL, `written` TEXT NOT NULL, `createdAt` INTEGER NOT NULL)"
                 )
                 db.execSQL("CREATE UNIQUE INDEX IF NOT EXISTS `index_corrections_heardKey` ON `corrections` (`heardKey`)")
+            }
+        }
+
+        /**
+         * 5 (0.10.0): transcribing a call again in another language. Each call notes the language its transcript was
+         * made in, and the language chosen for it by hand, if any. Earlier transcripts don't say; no call has a choice.
+         */
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `recordings` ADD COLUMN `language` TEXT")
+                db.execSQL("ALTER TABLE `recordings` ADD COLUMN `pinnedLanguage` TEXT")
             }
         }
     }

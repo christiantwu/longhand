@@ -70,24 +70,41 @@ class MigrationTest {
         )
     }
 
-    @Test fun version4AddsTheCorrectionsTableAndEditingColumnsAsRoomExportsThem() {
-        val (alters, creates) = executed { AppDatabase.MIGRATION_3_4.migrate(it) }.partition { it.startsWith("ALTER TABLE") }
-        assertEquals(tables(3) + "corrections", tables(4))
-        assertEquals(exportedSql(4, listOf("corrections")), creates)
-
+    /**
+     * [alters] add columns to version [from]'s tables exactly as Room declares them in the next version (type, NOT NULL,
+     * default), and nothing else changed: the other columns, the keys and the indices are as in version [from].
+     * @return the tables they add columns to.
+     */
+    private fun assertAddsColumns(from: Int, alters: List<String>): Set<String> {
         val added = alters.map {
             val m = checkNotNull(Regex("ALTER TABLE `(\\w+)` ADD COLUMN (.+)").matchEntire(it)) { "unexpected $it" }
             m.groupValues[1] to m.groupValues[2]
         }
-        assertEquals(setOf("segments", "recordings"), added.map { it.first }.toSet())
-        for (table in tables(3)) {
+        for (table in tables(from)) {
             val definitions = added.filter { it.first == table }.map { it.second }
-            // The new columns exactly as Room declares them (type, NOT NULL, default) and nothing else changed:
-            // the other columns, the keys and the indices are as in version 3.
-            assertEquals(table, columns(3, table) + definitions.associateBy { it.substringBefore(' ') }, columns(4, table))
-            val (old, new) = listOf(3, 4).map { v -> exportedSql(v, listOf(table)) }
+            assertEquals(table, columns(from, table) + definitions.associateBy { it.substringBefore(' ') }, columns(from + 1, table))
+            val (old, new) = listOf(from, from + 1).map { v -> exportedSql(v, listOf(table)) }
             assertEquals(table, parts(old.first()).filterNot { it.startsWith("`") }, parts(new.first()).filterNot { it.startsWith("`") })
             assertEquals(table, old.drop(1), new.drop(1))
         }
+        return added.map { it.first }.toSet()
+    }
+
+    @Test fun version4AddsTheCorrectionsTableAndEditingColumnsAsRoomExportsThem() {
+        val (alters, creates) = executed { AppDatabase.MIGRATION_3_4.migrate(it) }.partition { it.startsWith("ALTER TABLE") }
+        assertEquals(tables(3) + "corrections", tables(4))
+        assertEquals(exportedSql(4, listOf("corrections")), creates)
+        assertEquals(setOf("segments", "recordings"), assertAddsColumns(3, alters))
+    }
+
+    @Test fun version5AddsTheLanguageColumnsAsRoomExportsThem() {
+        val sql = executed { AppDatabase.MIGRATION_4_5.migrate(it) }
+        assertEquals(tables(4), tables(5))
+        assertEquals(setOf("recordings"), assertAddsColumns(4, sql))
+        // Both may be null: earlier transcripts don't say which language they were made in, and no call has one chosen yet.
+        assertEquals(
+            mapOf("`language`" to "`language` TEXT", "`pinnedLanguage`" to "`pinnedLanguage` TEXT"),
+            columns(5, "recordings") - columns(4, "recordings").keys,
+        )
     }
 }

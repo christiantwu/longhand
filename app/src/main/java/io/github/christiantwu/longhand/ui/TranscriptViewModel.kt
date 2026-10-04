@@ -123,6 +123,29 @@ fun voiceSuggestions(
     return out
 }
 
+/** "Transcribe again" with more than one language on the phone: the call can be transcribed in any of them. */
+object TranscribeAgain {
+    /** The [languages] to choose from, starting on [preselected]. */
+    class Offer(val languages: List<Models.Language>, val preselected: Models.Language)
+
+    /**
+     * The language the choice starts on, of the [usable] ones: the call's [pinned] language, else the one its transcript
+     * was [madeWith], else the one Settings transcribes in (the [chosen] language, or while it downloads the [previous] one).
+     */
+    fun preselected(
+        pinned: Models.Language?, madeWith: Models.Language?, chosen: Models.Language, previous: Models.Language?,
+        usable: List<Models.Language>,
+    ): Models.Language? = (listOfNotNull(pinned, madeWith, chosen, previous) + usable).firstOrNull { it in usable }
+
+    /**
+     * The call's pinned language once [picked] is chosen: none for the language Settings transcribes in now (the
+     * [chosen] one, or while it downloads the [previous] one, since the chosen one isn't offered yet), which the call
+     * then follows.
+     */
+    fun pin(picked: Models.Language, chosen: Models.Language, previous: Models.Language?, sizes: Models.Sizes): Models.Language? =
+        picked.takeUnless { it == (Models.languageFor(null, chosen, previous, sizes) ?: chosen) }
+}
+
 @OptIn(ExperimentalCoroutinesApi::class)
 class TranscriptViewModel(app: Application, savedState: SavedStateHandle) : AndroidViewModel(app) {
 
@@ -541,12 +564,27 @@ class TranscriptViewModel(app: Application, savedState: SavedStateHandle) : Andr
 
     // ---------------------------------------------------------------- queue & export
 
+    /** What "Transcribe again" offers; null with fewer than two languages on the phone, when there's nothing to choose. */
+    suspend fun transcribeAgainOffer(): TranscribeAgain.Offer? = withContext(Dispatchers.IO) {
+        val rec = dao.get(id) ?: return@withContext null
+        val usable = Models.usableLanguages(getApplication<Application>())
+        if (usable.size < 2) return@withContext null
+        val s = settingsStore.current()
+        TranscribeAgain.preselected(rec.pinnedLanguage, rec.language, s.language, s.previousLanguage, usable)
+            ?.let { TranscribeAgain.Offer(usable, it) }
+    }
+
     /**
      * Queues this recording again and starts right away, regardless of the charging setting. Edits by hand are replaced
-     * (the screen asks first), so the call stops counting as edited.
+     * (the screen asks first), so the call stops counting as edited. A [language] chosen for it stays with the call, for
+     * its later transcriptions too, unless it's the one chosen in Settings: then the call follows Settings again.
      */
-    fun retranscribe() = viewModelScope.launch(Dispatchers.IO) {
+    fun retranscribe(language: Models.Language? = null) = viewModelScope.launch(Dispatchers.IO) {
         forgetUndo()
+        if (language != null) {
+            val s = settingsStore.current()
+            dao.setPinnedLanguage(id, TranscribeAgain.pin(language, s.language, s.previousLanguage, Models.sizes(getApplication())))
+        }
         dao.forgetEdits(id)
         dao.requeue(listOf(id))
         dao.request(listOf(id))

@@ -6,6 +6,7 @@ import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
 import io.github.christiantwu.longhand.engine.Corrections
+import io.github.christiantwu.longhand.engine.Models
 
 enum class RecordingStatus { PENDING, PROCESSING, DONE, FAILED, SKIPPED }
 
@@ -62,6 +63,13 @@ data class Recording(
     @ColumnInfo(defaultValue = "1") val announced: Boolean = true,
     /** When the transcript was last changed by hand (a line's text or speaker); null if never. */
     val editedAt: Long? = null,
+    /** The language the transcript was made in; null for transcripts made before 0.10.0. */
+    val language: Models.Language? = null,
+    /**
+     * A language chosen by hand for this call ("Transcribe again"): every later transcription of it uses this one while
+     * it's on the phone, and the language chosen in Settings otherwise. Null: the call follows Settings.
+     */
+    val pinnedLanguage: Models.Language? = null,
 )
 
 /** Versions of the transcription pipeline. Transcripts made by an older one are redone on the charger. */

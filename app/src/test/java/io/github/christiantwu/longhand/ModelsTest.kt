@@ -302,6 +302,53 @@ class ModelsTest {
         assertEquals(Models.Language.ENGLISH, Models.previousAfter(Models.Language.ENGLISH, Models.Language.HINDI, Models.Language.EUROPEAN, disk))
     }
 
+    @Test fun aCallPinnedToALanguageUsesItWhileItIsOnThePhone() {
+        val disk = Disk().add(SPEECH, CJK)
+        assertEquals(Models.Language.CJK, Models.languageFor(Models.Language.CJK, Models.Language.ENGLISH, null, disk))
+        assertEquals(Models.Language.ENGLISH, Models.languageFor(Models.Language.ENGLISH, Models.Language.CJK, null, disk))
+        // Removed: the call follows Settings. The pin stays, so once it's downloaded again the call uses it again.
+        Models.recognizerPaths(listOf(CJK)).forEach { disk.files.remove(it) }
+        assertEquals(Models.Language.ENGLISH, Models.languageFor(Models.Language.CJK, Models.Language.ENGLISH, null, disk))
+        disk.add(CJK)
+        assertEquals(Models.Language.CJK, Models.languageFor(Models.Language.CJK, Models.Language.ENGLISH, null, disk))
+        // Half downloaded isn't usable.
+        disk.files[HINDI.part("encoder").path] = HINDI.part("encoder").sizeBytes
+        assertEquals(Models.Language.ENGLISH, Models.languageFor(Models.Language.HINDI, Models.Language.ENGLISH, null, disk))
+        // An earlier install, still on the encoder an improved one replaces, is usable.
+        val earlierEnglish = earlier(SPEECH).add(MULTILINGUAL)
+        assertEquals(Models.Language.ENGLISH, Models.languageFor(Models.Language.ENGLISH, Models.Language.EUROPEAN, null, earlierEnglish))
+        // Nothing usable: nothing to transcribe with, pinned or not.
+        assertNull(Models.languageFor(Models.Language.CJK, Models.Language.ENGLISH, null, Disk()))
+    }
+
+    @Test fun aPinnedLanguageGoesBeforeTheOneTranscribingWhileSettingsLanguageDownloads() {
+        val disk = Disk().add(SPEECH, MULTILINGUAL)
+        assertEquals(Models.Language.EUROPEAN, Models.languageFor(null, Models.Language.HINDI, Models.Language.EUROPEAN, disk))
+        assertEquals(Models.Language.ENGLISH, Models.languageFor(Models.Language.ENGLISH, Models.Language.HINDI, Models.Language.EUROPEAN, disk))
+        // Once it's in, Settings' language takes over for the calls that follow Settings, but not for a pinned one.
+        disk.add(HINDI)
+        assertEquals(Models.Language.HINDI, Models.languageFor(null, Models.Language.HINDI, Models.Language.EUROPEAN, disk))
+        assertEquals(Models.Language.ENGLISH, Models.languageFor(Models.Language.ENGLISH, Models.Language.HINDI, Models.Language.EUROPEAN, disk))
+    }
+
+    @Test fun aCallWithoutAPinFollowsSettingsAsTheRecognizerDoes() {
+        val disks = listOf(Disk(), Disk().add(SPEECH), Disk().add(MULTILINGUAL, HINDI), earlier(SPEECH).add(CJK))
+        val previous = listOf(null) + Models.Language.entries
+        for (disk in disks) for (chosen in Models.Language.entries) for (before in previous) {
+            assertEquals("$chosen after $before", Models.recognizer(chosen.set, before?.set, disk),
+                Models.languageFor(null, chosen, before, disk)?.set)
+        }
+    }
+
+    @Test fun usableLanguagesInSettingsOrder() {
+        assertEquals(emptyList<Models.Language>(), Models.usableLanguages(Disk()))
+        assertEquals(listOf(Models.Language.ENGLISH, Models.Language.CJK), Models.usableLanguages(Disk().add(CJK, SPEECH)))
+        assertEquals(listOf(Models.Language.ENGLISH), Models.usableLanguages(earlier(SPEECH)))
+        // A download still going isn't one.
+        val disk = Disk().add(MULTILINGUAL).also { it.files[HINDI.part("encoder").path] = HINDI.part("encoder").sizeBytes }
+        assertEquals(listOf(Models.Language.EUROPEAN), Models.usableLanguages(disk))
+    }
+
     @Test fun onlyALanguageNeitherChosenNorInUseCanBeRemoved() {
         val disk = Disk().add(SPEECH, MULTILINGUAL, CJK)
         // Hindi downloading after the European languages, which transcribe meanwhile.

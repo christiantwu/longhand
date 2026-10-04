@@ -147,7 +147,7 @@ object Models {
         fun of(path: String): Long
     }
 
-    private fun sizes(context: Context) = Sizes { file(context, it).length() }
+    fun sizes(context: Context) = Sizes { file(context, it).length() }
 
     private fun ModelFile.inPlace(sizes: Sizes) = sizes.of(path) == sizeBytes
 
@@ -179,7 +179,9 @@ object Models {
     fun fileInUse(context: Context, f: ModelFile): File = file(context, pathInUse(f, sizes(context)))
 
     /** Every file a [TranscriptionEngine] for [set] would load now; a change means it should load again. */
-    fun filesInUse(context: Context, set: Set): List<String> = sizes(context).let { s -> set.files.map { pathInUse(it, s) } }
+    fun filesInUse(set: Set, sizes: Sizes): List<String> = set.files.map { pathInUse(it, sizes) }
+
+    fun filesInUse(context: Context, set: Set): List<String> = filesInUse(set, sizes(context))
 
     /**
      * Files earlier versions left in [set] that nothing will use: a replaced file once its replacement is in
@@ -240,6 +242,38 @@ object Models {
         (listOfNotNull(chosen, previous) + speechSets).firstOrNull { isInstalled(it, sizes) }
 
     fun recognizer(context: Context, chosen: Set, previous: Set?): Set? = recognizer(chosen, previous, sizes(context))
+
+    /**
+     * The language to transcribe a call in: the one [pinned] to it by hand while that's usable, else the one Settings
+     * transcribes in ([recognizer] for the [chosen] and [previous] languages); null if none is usable. A pinned language
+     * that was removed isn't forgotten: once it's downloaded again, the call uses it again.
+     */
+    fun languageFor(pinned: Language?, chosen: Language, previous: Language?, sizes: Sizes): Language? {
+        if (pinned != null && isInstalled(pinned.set, sizes)) return pinned
+        val set = recognizer(chosen.set, previous?.set, sizes) ?: return null
+        return Language.entries.first { it.set == set }
+    }
+
+    fun languageFor(context: Context, pinned: Language?, chosen: Language, previous: Language?): Language? =
+        languageFor(pinned, chosen, previous, sizes(context))
+
+    /** What a call is transcribed with: its [language], and the model [files] for it, to load unless they're loaded. */
+    data class EnginePick(val language: Language, val files: List<String>, val reload: Boolean)
+
+    /**
+     * The engine for a call ([languageFor]), and whether it must be loaded: only when the files differ from the
+     * [loaded] ones, since loading takes seconds and a backlog in one language shouldn't reload for every call.
+     */
+    fun engineFor(pinned: Language?, chosen: Language, previous: Language?, loaded: List<String>?, sizes: Sizes): EnginePick? {
+        val language = languageFor(pinned, chosen, previous, sizes) ?: return null
+        val files = filesInUse(language.set, sizes)
+        return EnginePick(language, files, files != loaded)
+    }
+
+    /** The languages calls can be transcribed in now, in the order Settings lists them. */
+    fun usableLanguages(sizes: Sizes): List<Language> = Language.entries.filter { isInstalled(it.set, sizes) }
+
+    fun usableLanguages(context: Context): List<Language> = usableLanguages(sizes(context))
 
     /**
      * The language to remember as used before, on a switch from [leaving] to [chosen]: [leaving] if it was usable,

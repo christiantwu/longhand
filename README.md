@@ -153,7 +153,9 @@ tests of the model, recognition took about 1.8 times as long as the European lan
    is ready, and redos don't send a notification.
    Each recording is transcribed in the language chosen in Settings, or, while that one downloads,
    in the one used before (`Models.recognizer`), so a switch to a language already on the phone
-   takes effect from the next recording.
+   takes effect from the next recording. With more than one language on the phone, **⋮ → Transcribe
+   again** asks which to use for that call. A language other than the one in Settings stays with the
+   call for its later transcriptions too, as long as it's on the phone (`Models.languageFor`).
    It runs as a foreground job with a progress notification, in two phases so the two model
    sets are never in memory together:
    1. **Transcribe** each pending recording (`TranscriptionEngine`):
