@@ -38,4 +38,10 @@ class SettingsTest {
         assertTrue(Settings.from(emptyPreferences()).detectLanguage)
         assertFalse(Settings.from(preferencesOf(booleanPreferencesKey("detect_language") to false)).detectLanguage)
     }
+
+    @Test fun summariesAreInTheCallsLanguageUntilTurnedOff() {
+        assertTrue(AppSettings().summariesInCallLanguage)
+        assertTrue(Settings.from(emptyPreferences()).summariesInCallLanguage)
+        assertFalse(Settings.from(preferencesOf(booleanPreferencesKey("summaries_in_call_language") to false)).summariesInCallLanguage)
+    }
 }

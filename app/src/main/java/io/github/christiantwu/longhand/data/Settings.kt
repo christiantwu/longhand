@@ -36,6 +36,11 @@ data class AppSettings(
     val recogniseVoices: Boolean = false,
     /** The transcript's tip about long-pressing a line was dismissed, or a line's menu was opened. */
     val editTipSeen: Boolean = false,
+    /**
+     * Write each new summary in the language of the call (engine.SummaryLanguage); off, every summary is in English.
+     * Summaries already written stay as they are.
+     */
+    val summariesInCallLanguage: Boolean = true,
 )
 
 private val Context.dataStore by preferencesDataStore("settings")
@@ -54,6 +59,7 @@ class Settings(private val context: Context) {
         val detectLanguage = booleanPreferencesKey("detect_language")
         val recogniseVoices = booleanPreferencesKey("recognise_voices")
         val editTipSeen = booleanPreferencesKey("edit_tip_seen")
+        val summariesInCallLanguage = booleanPreferencesKey("summaries_in_call_language")
     }
 
     val flow: Flow<AppSettings> = context.dataStore.data.map(::from)
@@ -79,6 +85,7 @@ class Settings(private val context: Context) {
     suspend fun setDetectLanguage(v: Boolean) = set(Keys.detectLanguage, v)
     suspend fun setRecogniseVoices(v: Boolean) = set(Keys.recogniseVoices, v)
     suspend fun setEditTipSeen(v: Boolean) = set(Keys.editTipSeen, v)
+    suspend fun setSummariesInCallLanguage(v: Boolean) = set(Keys.summariesInCallLanguage, v)
 
     companion object {
         fun from(p: Preferences) = AppSettings(
@@ -94,6 +101,7 @@ class Settings(private val context: Context) {
             detectLanguage = p[Keys.detectLanguage] ?: true,
             recogniseVoices = p[Keys.recogniseVoices] ?: false,
             editTipSeen = p[Keys.editTipSeen] ?: false,
+            summariesInCallLanguage = p[Keys.summariesInCallLanguage] ?: true,
         )
     }
 }

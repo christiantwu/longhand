@@ -318,6 +318,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (!on) voiceDao.forgetAll()
     }
 
+    /** New summaries only: those already written stay in the language they're in. */
+    fun setSummariesInCallLanguage(on: Boolean) = viewModelScope.launch(Dispatchers.IO) { settingsStore.setSummariesInCallLanguage(on) }
+
     fun forgetKnownVoice(id: Long) = viewModelScope.launch(Dispatchers.IO) { voiceDao.forget(id) }
 
     fun forgetAllKnownVoices() = viewModelScope.launch(Dispatchers.IO) { voiceDao.forgetAll() }

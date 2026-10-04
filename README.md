@@ -28,7 +28,7 @@ and no server, and nothing is uploaded.
   timestamp. Mark your own voice once and Longhand labels you "You" in every call.
 - **Names the caller** from your call log and contacts, if you allow it.
 - **Summarizes each call** with a topic line, a short summary and any follow-ups, written
-  by a small language model on the phone. Summaries are optional.
+  by a small language model on the phone in the language of the call. Summaries are optional.
 - **Plays any line.** Tap a line to hear that moment of the recording.
 - **Fix what it got wrong.** Long-press a line to edit it, split it, or give it to someone
   else, and add common corrections, like “UV” → “Youvee”, for every new transcript.
@@ -36,7 +36,13 @@ and no server, and nothing is uploaded.
   Markdown, or share the recording itself.
 - **Languages:** English, 25 European languages, Chinese, Japanese and Korean, or Hindi (with
   English, including calls that mix the two). Keep two or more, and each call is transcribed in
-  the one it's in.
+  the one it's in. Summaries are written in the call's language too. That was tested in German,
+  Spanish, French, Swedish, Polish, Chinese, Japanese, Korean, Hindi and Hindi-English, and all
+  of them were good enough to keep. The other European languages are summarized in their own
+  language too, but haven't been tested. Naming a European call's language takes language
+  detection (two or more languages kept, with **Detect each call's language** on); without it a
+  European call is asked for "the language the call is in", which sometimes still gives English
+  (Swedish did in the tests), and one with almost no letters beyond ASCII is summarized in English.
 
 ## Privacy
 
@@ -107,9 +113,10 @@ already downloaded is instant, and **Remove** next to it in Settings frees its s
 left unfinished when you choose another language is deleted. Once a second language is in, the
 language detection model (~160 MB) follows, unless **Detect each call's language** is off; it's
 deleted when you turn that off or keep only one language. Downloads wait for Wi-Fi (an
-unmetered connection) unless you choose to go ahead on mobile data or a metered network. Summaries follow an English
-prompt, so a call in another language may still get its summary in English. After that you can
-turn off the app's Network permission in GrapheneOS.
+unmetered connection) unless you choose to go ahead on mobile data or a metered network. After
+that you can turn off the app's Network permission in GrapheneOS. Summaries are written in the
+language of the call, or all in English with **Write summaries in the call's language** turned
+off in Settings.
 
 **The English and European languages encoders are Longhand's own.** sherpa-onnx's int8
 conversions of Parakeet v2 and v3 quantize every convolution in the encoder, and that costs
@@ -240,10 +247,30 @@ tests of the model, recognition took about 1.8 times as long as the European lan
       stereo recording has each person on
       their own channel, the channel is used as the speaker instead of diarization.
    2. **Summarize** each new transcript (`Summarizer`). The model writes a topic, a summary and
-      follow-ups. A GBNF grammar forces the exact JSON shape. A long call's middle is left out to
-      fit the model's context. How much fits depends on the script: Qwen's tokenizer takes about
-      3.5 characters of English a token but only ~2 of a Hindi transcript, so Devanagari counts
-      for more.
+      follow-ups. A GBNF grammar forces the exact JSON shape. The instructions are in English. A
+      call in another language gets one more sentence after its transcript, such as "Write the
+      topic, summary and follow-ups in German." (`engine/SummaryLanguage.kt`). The language comes
+      from the call:
+      - **Detected:** the language detection heard most in the call, if the transcript's model
+        writes it. Whisper's stand-ins for European languages are never named.
+      - **Hindi model:** Hindi, for calls that mix it with English too. Only a call heard as
+        English throughout gets English.
+      - **SenseVoice:** by the script of the lines. Hangul means Korean, kana Japanese, Han
+        characters only Chinese, and mostly Latin letters English. Cantonese is written as Chinese.
+      - **European model, no language detected:** the call is asked for "the language the call is
+        in" when its words have letters beyond ASCII. Without them it could be English, so nothing
+        is added.
+
+      English calls get no sentence and keep their budget, so their prompt is exactly the one
+      evaluated. With **Write summaries in the call's language** off in Settings, every call is
+      summarized in English. Summaries already written stay as they are until the call is
+      summarized again, after **Transcribe again** or an edit, say.
+      A long call's middle is left out to fit the model's context. How much fits depends on the
+      script. For an English summary it's about 3.5 characters a token, with Devanagari (about 2 a
+      token in a Hindi transcript) counting for more. For any other language, each line is priced
+      at its measured cost: about 7.5 tokens for its time stamp and newline, since Qwen splits
+      digits one by one, then each character at its script's rate. Chinese, for example, comes to
+      about 1.4 characters a token.
 3. **Recognising "You":** tap a speaker's name in a transcript and choose **Me**. That voice
    is averaged into `voiceprint-2.bin`, and `VoiceMatchWorker` then labels you in every other
    transcript made by this version, and in older ones once they're redone (cosine similarity
@@ -306,6 +333,31 @@ community Qwen 3.8 2B/4B distills.
 Qwen 3.5 4B gave the most specific topic lines with accurate facts. Gemma 4 E2B is the
 faster runner-up. Q4_0 is used because llama.cpp repacks it for fast ARM matrix maths; its
 quality matched Q4_K_M on the samples.
+
+### Summaries in the call's language
+
+The language sentence was chosen the same way: with the app's prompt, grammar and llama.cpp
+settings on the desktop, on 26 fictional calls in German, Spanish, French, Swedish, Polish,
+Japanese, Chinese, Korean, Hindi and Hindi-English, each output checked field by field against
+the facts of the call.
+
+- **Where the sentence goes:** naming the language put 75 of 76 fields in it, wherever it went.
+  At the end of the user message, after the transcript, follow-ups were as accurate as in the
+  English summaries of the same calls: 83% right on who does what and when, against 82%. In the
+  system instructions that fell to 72%, with more actions given to the wrong person.
+- **Facts:** 76% of the calls' key facts were right, against 73% in English. Most mistakes, in
+  every language and in English too, are numbers spoken as words, like ढाई हज़ार or spelled-out
+  German amounts.
+- **Languages:** all ten were good enough to keep, so none falls back to English. Chinese came out
+  best. Polish was the weakest, with some case and word errors, and is the first to fall back
+  to English if that proves a problem. Japanese once had a stray Chinese character in a follow-up.
+- **Unnamed language:** "the language the call is in" gave every field in the call's language
+  in only 21 of 26 calls. Neither Swedish call worked, and those came out in English. Any wording
+  that names no language changed English summaries too. So it's used only for European calls
+  whose language wasn't detected and whose words have letters beyond ASCII.
+- **Longer replies:** about 18% more reply tokens and 10% more time a call, never near the 320
+  tokens allowed. French and Spanish, the wordiest, occasionally fill a field to its limit (90
+  characters for a follow-up), which cuts it mid-word.
 
 ### Tuning speaker separation
 

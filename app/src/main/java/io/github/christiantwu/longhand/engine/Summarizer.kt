@@ -1,6 +1,7 @@
 package io.github.christiantwu.longhand.engine
 
 import java.io.Closeable
+import java.lang.Character.UnicodeScript
 
 data class CallSummary(val topic: String, val summary: String, val followUps: List<String>)
 
@@ -17,18 +18,20 @@ class Summarizer(modelPath: String, threads: Int = 4) : Closeable {
     @Volatile private var cancelled = false
 
     /**
+     * Summarizes a call, in [language] ([SummaryLanguage.forCall]).
      * @return the summary, or null when the model couldn't produce one (prompt too long even
      * after trimming, or [cancel] was called).
      */
-    fun summarize(header: String, lines: List<String>): CallSummary? {
+    fun summarize(header: String, lines: List<String>, language: SummaryLanguage = SummaryLanguage.English): CallSummary? {
         cancelled = false
         nativeReset(handle)
         // A budget for the transcript's script mix; retry with less if it still doesn't fit.
         // Priced by the script of the lines that will actually be kept (the start and end of a long call).
-        var budget = SummaryPrompt.charBudget(lines).let { minOf(it, SummaryPrompt.charBudget(SummaryPrompt.fit(lines, it))) }
+        var budget = SummaryPrompt.charBudget(lines, language)
+            .let { minOf(it, SummaryPrompt.charBudget(SummaryPrompt.fit(lines, it), language)) }
         repeat(3) {
             if (cancelled) return null
-            val prompt = SummaryPrompt.build(header, lines, budget)
+            val prompt = SummaryPrompt.build(header, lines, budget, language)
             val bytes = nativeGenerate(handle, prompt, SummaryPrompt.GRAMMAR, MAX_REPLY_TOKENS)
             if (bytes != null) return SummaryParser.parse(String(bytes, Charsets.UTF_8))
             budget /= 2
@@ -82,10 +85,13 @@ ws ::= | " " | "\n" [ \t]{0,20}
      * Builds the chat-formatted prompt (Qwen's format with thinking turned off).
      * When the transcript is longer than [charBudget], the middle of the call is left out:
      * the opening usually says what the call is about and the end holds the decisions.
+     * A summary in another [language] than English is asked for after the transcript, with a blank line before it:
+     * there it kept the follow-ups as accurate as in English, where in [SYSTEM] it got more of them the wrong way round.
+     * English adds nothing, so its prompt is the one evaluated.
      */
-    fun build(header: String, lines: List<String>, charBudget: Int): String {
+    fun build(header: String, lines: List<String>, charBudget: Int, language: SummaryLanguage = SummaryLanguage.English): String {
         val transcript = fit(lines, charBudget).joinToString("\n")
-        val user = "$header\n\nTranscript:\n$transcript"
+        val user = "$header\n\nTranscript:\n$transcript" + language.instruction?.let { "\n\n$it" }.orEmpty()
         return "<|im_start|>system\n$SYSTEM<|im_end|>\n<|im_start|>user\n$user<|im_end|>\n" +
             "<|im_start|>assistant\n<think>\n\n</think>\n\n"
     }
@@ -126,12 +132,59 @@ ws ::= | " " | "\n" [ \t]{0,20}
         return (ENGLISH_CHAR_BUDGET / ENGLISH_CHARS_PER_TOKEN / tokensPerChar).toInt()
     }
 
+    /**
+     * The budget for a call summarized in [language]: [charBudget] as before for English, so an English prompt can't
+     * change (a Hindi call summarized in English keeps it too), and [charBudgetByLine] for any other, which gets the
+     * longest calls of every measured script in at the first try.
+     */
+    fun charBudget(lines: List<String>, language: SummaryLanguage): Int =
+        if (language.instruction == null) charBudget(lines) else charBudgetByLine(lines)
+
+    /**
+     * Each line's tokens at their measured cost: its "[mm:ss] " time and newline (Qwen splits numbers into single
+     * digits), then each character of the speaker's name and words at its script's rate. Measured with the model's own
+     * tokenizer on fictional calls in ten languages, it came within 0.96 to 1.11 times their real tokens. Simulated
+     * hour-long calls in each script fit at the first try, keeping 80–95% of what fits, where [charBudget] needed a
+     * second or third try for most of them and kept as little as half. The same transcript target as English, in tokens.
+     */
+    private fun charBudgetByLine(lines: List<String>): Int {
+        val chars = lines.sumOf { it.length + 1 }
+        if (chars == 0) return ENGLISH_CHAR_BUDGET
+        var tokens = 0.0
+        for (line in lines) {
+            tokens += LINE_TOKENS
+            val text = if (line.startsWith("[") && "] " in line) line.substringAfter("] ") else line
+            for (c in text) tokens += tokensFor(c)
+        }
+        return (ENGLISH_CHAR_BUDGET / ENGLISH_CHARS_PER_TOKEN / (tokens / chars)).toInt()
+    }
+
+    /** A UTF-16 unit's cost in tokens, by its script; each half of a character beyond U+FFFF costs 1. */
+    private fun tokensFor(c: Char): Double = when {
+        c in '0'..'9' -> 1.0
+        c.code < 0x80 -> 0.25
+        c.code in 0x3000..0x303F || c.code in 0xFF00..0xFFEF -> 1.0 // CJK punctuation and full-width forms
+        else -> when (UnicodeScript.of(c.code)) {
+            UnicodeScript.LATIN -> 1.5 // ä ö ü ß é ç ñ å ą ę ł ś ż …
+            UnicodeScript.DEVANAGARI -> 0.5
+            UnicodeScript.HAN -> 0.65
+            UnicodeScript.HIRAGANA, UnicodeScript.KATAKANA -> 0.4
+            UnicodeScript.HANGUL -> 0.75
+            UnicodeScript.CYRILLIC -> 0.3
+            UnicodeScript.GREEK -> 0.45
+            else -> 1.0
+        }
+    }
+
     /** The transcript's share of the context for an English call, which [charBudget] keeps to in tokens. */
     private const val ENGLISH_CHAR_BUDGET = 22_000
     private const val ENGLISH_CHARS_PER_TOKEN = 3.5
 
     /** A Devanagari character's cost in tokens, measured with Qwen 3.5's tokenizer on sample Hindi calls (~1.6 characters a token). */
     private const val DEVANAGARI_TOKENS_PER_CHAR = 0.64
+
+    /** A line's "[mm:ss] " and newline, in tokens ([charBudgetByLine]). */
+    private const val LINE_TOKENS = 7.5
 }
 
 /**

@@ -139,20 +139,26 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit, onCorrections: () -> Un
             }
 
             Section("Summaries") {
-                SettingRow(
-                    "Topic and summary for each call",
-                    when {
-                        summary.installed -> "On. Written on the phone by Qwen 3.5 4B after each transcription."
-                        summary.downloading -> summary.downloadText
-                        summary.error != null -> "Download failed: ${summary.error}"
-                        else -> "Off. Needs a ${"%.1f".format(Models.Set.SUMMARY.totalBytes / 1e9)} GB download over Wi-Fi."
-                    },
-                    extra = {
-                        summary.runningProgress?.let { ProgressLine(it, Modifier.padding(top = 10.dp, bottom = 4.dp)) }
-                        // Under the text, as in the language rows, with its text lined up with the text above.
-                        Row(Modifier.offset(x = (-12).dp)) { ModelAction(summary, Models.Set.SUMMARY, vm) }
-                    },
-                ) { if (summary.installed) OutlinedPillButton("Remove", vm::removeSummaryModel) }
+                // The model, then once it's in, the language summaries are written in.
+                val count = if (summary.installed) 2 else 1
+                Column(verticalArrangement = Arrangement.spacedBy(GroupGap)) {
+                    SettingRow(
+                        "Topic and summary for each call",
+                        when {
+                            summary.installed -> "On. Written on the phone by Qwen 3.5 4B after each transcription."
+                            summary.downloading -> summary.downloadText
+                            summary.error != null -> "Download failed: ${summary.error}"
+                            else -> "Off. Needs a ${"%.1f".format(Models.Set.SUMMARY.totalBytes / 1e9)} GB download over Wi-Fi."
+                        },
+                        groupShape(0, count),
+                        extra = {
+                            summary.runningProgress?.let { ProgressLine(it, Modifier.padding(top = 10.dp, bottom = 4.dp)) }
+                            // Under the text, as in the language rows, with its text lined up with the text above.
+                            Row(Modifier.offset(x = (-12).dp)) { ModelAction(summary, Models.Set.SUMMARY, vm) }
+                        },
+                    ) { if (summary.installed) OutlinedPillButton("Remove", vm::removeSummaryModel) }
+                    if (summary.installed) SummariesInCallLanguage(s.summariesInCallLanguage, groupShape(1, count), vm)
+                }
             }
 
             Section("Processing") {
@@ -296,6 +302,25 @@ private fun DetectLanguage(on: Boolean, model: ModelState, vm: AppViewModel) {
                 // Lined up with the text above, as in the language rows.
                 Row(Modifier.offset(x = (-12).dp)) { ModelAction(model, Models.Set.LANGUAGE_ID, vm) }
             },
+        )
+    }
+}
+
+/** "Write summaries in the call's language": the switch, for summaries written from now on. */
+@Composable
+private fun SummariesInCallLanguage(on: Boolean, shape: Shape, vm: AppViewModel) {
+    GroupRow(
+        shape, minHeight = 72.dp,
+        action = Modifier.toggleable(value = on, role = Role.Switch, onValueChange = vm::setSummariesInCallLanguage),
+    ) {
+        RowText("Write summaries in the call's language",
+            (if (on) "On. Each call's topic, summary and follow-ups are written in the language spoken in it."
+            else "Off. Every summary is written in English.") + " Summaries already written stay as they are.")
+        Switch(
+            checked = on, onCheckedChange = null,
+            thumbContent = if (on) {
+                { Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(SwitchDefaults.IconSize)) }
+            } else null,
         )
     }
 }

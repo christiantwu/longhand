@@ -21,6 +21,7 @@ import io.github.christiantwu.longhand.engine.Models
 import io.github.christiantwu.longhand.engine.Separation
 import io.github.christiantwu.longhand.engine.SpeakerSeparation
 import io.github.christiantwu.longhand.engine.Summarizer
+import io.github.christiantwu.longhand.engine.SummaryLanguage
 import io.github.christiantwu.longhand.engine.TranscriptionEngine
 import io.github.christiantwu.longhand.engine.VoiceMath
 import io.github.christiantwu.longhand.engine.VoiceProfile
@@ -435,11 +436,16 @@ class TranscribeWorker(context: Context, params: WorkerParameters) : CoroutineWo
                     callerName = CallText.caller(rec, format),
                     speakers = segments.map { it.speaker }.toSet(),
                 )
+                // In the call's language, from what detection heard and the transcript's model and script; read for
+                // every call, so turning the setting off takes effect from the next summary.
+                val language = SummaryLanguage.forCall(Settings(applicationContext).current().summariesInCallLanguage,
+                    rec.language, rec.detection, segments.map { it.text })
                 val started = SystemClock.elapsedRealtime()
                 val summary = try {
                     summarizer.summarize(
                         TranscriptFormatter.summaryHeader(rec, format),
                         TranscriptFormatter.summaryLines(segments, names),
+                        language,
                     )
                 } catch (e: Exception) {
                     Log.e(TAG, "summary failed for ${rec.displayName}", e)
@@ -451,7 +457,7 @@ class TranscribeWorker(context: Context, params: WorkerParameters) : CoroutineWo
                         summary != null -> {
                             dao.saveSummary(rec.id, summary.topic, summary.summary, summary.followUps.joinToString("\n"))
                             done += rec.id
-                            Log.i(TAG, "summary for ${rec.displayName} in ${SystemClock.elapsedRealtime() - started} ms: ${summary.topic}")
+                            Log.i(TAG, "summary for ${rec.displayName} ($language) in ${SystemClock.elapsedRealtime() - started} ms: ${summary.topic}")
                         }
                         isStopped -> dao.endSummaryRun(rec.id, SummaryStatus.PENDING)
                         // A redone transcript keeps its previous summary rather than none.
