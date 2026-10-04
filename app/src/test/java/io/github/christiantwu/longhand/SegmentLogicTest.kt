@@ -27,6 +27,70 @@ class SegmentLogicTest {
         assertEquals(listOf(Span(0f, 4f, 0)), out)
     }
 
+    private fun withoutOverlaps(vararg turns: Span) = SegmentLogic.withoutOverlaps(turns.toList(), minLength = 0.2f)
+
+    @Test fun anMmHmmSaidOverSomeoneGoesAndTheirTurnKeepsTheAudio() {
+        assertEquals(listOf(Span(0f, 10f, 0)), withoutOverlaps(Span(0f, 10f, 0), Span(4f, 5.5f, 1)))
+        // Two parts of a sentence kept apart only by the "mm-hmm" join up again.
+        assertEquals(listOf(Span(0f, 9f, 0)), withoutOverlaps(Span(0f, 6f, 0), Span(4f, 5f, 1), Span(6.5f, 9f, 0)))
+    }
+
+    @Test fun aLongerTurnWithinAnotherCutsItInTwo() {
+        assertEquals(listOf(Span(0f, 5f, 0), Span(5f, 10f, 1), Span(10f, 20f, 0)), withoutOverlaps(Span(0f, 20f, 0), Span(5f, 10f, 1)))
+    }
+
+    @Test fun turnsThatPartlyOverlapMeetInTheMiddle() {
+        assertEquals(listOf(Span(0f, 9f, 0), Span(9f, 15f, 1)), withoutOverlaps(Span(0f, 10f, 0), Span(8f, 15f, 1)))
+        // The same span twice: each has half.
+        assertEquals(listOf(Span(0f, 2f, 0), Span(2f, 4f, 1)), withoutOverlaps(Span(0f, 4f, 1), Span(0f, 4f, 0)))
+    }
+
+    @Test fun aTurnWithinTwoThatOverlapSitsBetweenThem() {
+        // 0 and 1 overlap from 10 to 20 and would meet at 15, where 2 starts.
+        assertEquals(listOf(Span(0f, 15f, 0), Span(15f, 18f, 2), Span(18f, 30f, 1)),
+            withoutOverlaps(Span(0f, 20f, 0), Span(10f, 30f, 1), Span(15f, 18f, 2)))
+    }
+
+    @Test fun piecesTooShortToRecogniseGo() {
+        // 0's part before 1's turn would be 0.1 s.
+        assertEquals(listOf(Span(0.1f, 5f, 1), Span(5f, 10f, 0)), withoutOverlaps(Span(0f, 10f, 0), Span(0.1f, 5f, 1)))
+        // 1's turn within 0's meets 2's at 9.625 and 0's meets 2's at 9.75: the sliver of 0's between goes.
+        assertEquals(listOf(Span(0f, 7.5f, 0), Span(7.5f, 9.625f, 1), Span(9.75f, 14f, 2)),
+            withoutOverlaps(Span(0f, 10f, 0), Span(9.5f, 14f, 2), Span(7.5f, 9.75f, 1)))
+    }
+
+    @Test fun aSpeakersOwnTurnsThatOverlapAreOne() {
+        // Speaker 0 heard twice at 8-10 (two of their clusters at once) and an "mm-hmm" from 1 inside.
+        assertEquals(listOf(Span(0f, 12f, 0)), withoutOverlaps(Span(0f, 10f, 0), Span(5f, 6f, 1), Span(8f, 12f, 0)))
+    }
+
+    @Test fun aSpeakerMayBeLeftWithNoTurns() {
+        assertEquals(listOf(Span(0f, 10f, 0), Span(12f, 15f, 2)),
+            withoutOverlaps(Span(0f, 10f, 0), Span(2f, 3f, 1), Span(6f, 7f, 1), Span(12f, 15f, 2)))
+    }
+
+    @Test fun everyMomentIsHeardOnceAndNoneIsLost() {
+        val random = kotlin.random.Random(7)
+        repeat(200) {
+            val turns = List(12) {
+                val start = random.nextFloat() * 60f
+                Span(start, start + 0.3f + random.nextFloat() * 8f, random.nextInt(3))
+            }
+            val out = SegmentLogic.withoutOverlaps(SegmentLogic.merge(turns), minLength = 0.2f)
+            out.zipWithNext().forEach { (a, b) -> assert(a.end <= b.start) { "overlap: $a $b in $turns" } }
+            out.forEach { assert(it.duration >= 0.2f) { "too short: $it in $turns" } }
+            // Only pieces too short to recognise are left out (two side by side at most).
+            fun covered(spans: List<Span>, t: Float) = spans.any { t >= it.start && t < it.end }
+            var lost = 0f
+            var t = 0f
+            while (t < 70f) {
+                lost = if (covered(turns, t) && !covered(out, t)) lost + 0.05f else 0f
+                assert(lost <= 0.45f) { "lost up to $t of $turns: $out" }
+                t += 0.05f
+            }
+        }
+    }
+
     @Test fun relabelsByFirstAppearance() {
         val out = SegmentLogic.relabelByFirstAppearance(listOf(Span(5f, 6f, 0), Span(0f, 1f, 1), Span(2f, 3f, 2)))
         // First heard: old 1 (t=0) -> 0, old 2 (t=2) -> 1, old 0 (t=5) -> 2.

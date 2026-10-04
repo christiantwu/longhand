@@ -215,7 +215,10 @@ tests of the model, recognition took about 1.8 times as long as the European lan
          Fragments too short to fingerprint go to the voice around them. The number of people
          isn't fixed, so a transferred call can have three. Speakers are numbered in the order
          they first speak.
-      3. Merge each person's consecutive speech into one turn.
+      3. Merge each person's consecutive speech into one turn, then make the turns not overlap,
+         so every moment is recognised once: a turn of 1.5 s or less said over someone else's
+         (a "yeah") is left to the surrounding turn, a longer one cuts the turn around it in two,
+         and turns that partly overlap meet in the middle.
       4. Cut turns longer than 25 s in the middle of pauses, keeping all the audio.
       5. Recognise the text. Parakeet and SenseVoice run in sherpa-onnx's offline recognizer, one
          piece at a time. Hindi's Nemotron is a streaming model, run in its online recognizer
@@ -274,8 +277,9 @@ tests of the model, recognition took about 1.8 times as long as the European lan
 3. **Recognising "You":** tap a speaker's name in a transcript and choose **Me**. That voice
    is averaged into `voiceprint-2.bin`, and `VoiceMatchWorker` then labels you in every other
    transcript made by this version, and in older ones once they're redone (cosine similarity
-   ≥ 0.5, with a 0.15 margin over the other voices). On a two-person call, the other voice gets
-   the contact's name. Speaker separation uses the voiceprint too: the cluster that sounds most
+   ≥ 0.5, with a 0.15 margin over the other voices). The other voice that speaks the most gets
+   the contact's name (a tie goes to the one heard first); any further voices stay "Speaker N",
+   and a name you give by hand always wins. Speaker separation uses the voiceprint too: the cluster that sounds most
    like you, by the same margin, stays a speaker of its own however little you say, as long as
    one stretch of half a second is clear of other voices. Transcripts made before 0.5.0 may have
    one speaker for two people, so their voices are never learned. Choosing **Me** there labels
@@ -369,7 +373,10 @@ said what. It needs ffmpeg, numpy and sherpa-onnx 1.13.8. Recordings and labels 
 The thresholds in `SpeakerResolver` were tuned on three real calls (two people, and two
 transferred calls with three). Each was also scored cut off before the transfer, to give
 two-person cases. The old pipeline put 58% of the labelled speech on the wrong speaker in the
-worst call; the current one gets 96–100% right in each, with the right number of people.
+worst call; the current one gets 94–96% right in each (scored so that each moment counts for
+one speaker only), with the right number of people. A fourth labelled call, in which one
+person's voice changes partway through, comes out 85% right: after the change, part of their
+speech goes to the owner.
 `--fixtures` writes the harness's inputs and decisions for `SpeakerResolverParityTest`, which
 checks that the Kotlin code decides the same way.
 

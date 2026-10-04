@@ -11,18 +11,34 @@ data class Turn(val startMs: Long, val speaker: Int, val text: String, val endMs
 
 /**
  * How the speakers in one transcript are named. A name typed by hand always wins; then the
- * phone's owner is "You", and on a two-person call the other voice is the contact.
+ * phone's owner is "You", and the other voice heard most is the contact ([caller]).
  */
 data class SpeakerNames(
     val manual: Map<Int, String> = emptyMap(),
     val owner: Int? = null,
     val callerName: String? = null,
-    val speakers: Set<Int> = emptySet(),
+    /** How long each speaker speaks (ms), in the order they're first heard: [speechOf] the transcript's lines. */
+    val speech: Map<Int, Long> = emptyMap(),
 ) {
+    /** The speakers with lines in the transcript. */
+    val speakers: Set<Int> get() = speech.keys
+
+    /**
+     * The speaker given the caller's name without it being typed: with the owner known and among the speakers, whoever
+     * else speaks longest (of two who speak as long, the one heard first). Another voice (someone in the background, a
+     * recorded announcement) stays "Speaker N" rather than taking the name from the contact. Nobody is given it once
+     * it's been typed for someone.
+     */
+    val caller: Int? = when {
+        owner == null || owner !in speech || callerName == null -> null
+        manual.values.any { it.trim().equals(callerName.trim(), ignoreCase = true) } -> null
+        else -> speech.keys.filter { it != owner }.maxByOrNull { speech.getValue(it) }
+    }
+
     fun label(speaker: Int): String {
         manual[speaker]?.takeIf { it.isNotBlank() }?.let { return it.trim() }
         if (speaker == owner) return "You"
-        if (owner != null && callerName != null && speakers.size == 2 && speaker in speakers) return callerName
+        if (speaker == caller && callerName != null) return callerName
         return unnamedLabel(speaker)
     }
 
@@ -32,6 +48,15 @@ data class SpeakerNames(
     fun isUnnamed(speaker: Int) = manual[speaker].isNullOrBlank() && label(speaker) == unnamedLabel(speaker)
 
     private fun unnamedLabel(speaker: Int) = "Speaker ${speaker + 1}"
+
+    companion object {
+        /** How long each speaker speaks in [segments] (ms), in the order they're first heard. */
+        fun speechOf(segments: List<Segment>): Map<Int, Long> {
+            val out = LinkedHashMap<Int, Long>()
+            for (s in TranscriptFormatter.inOrder(segments)) out[s.speaker] = (out[s.speaker] ?: 0L) + maxOf(s.endMs - s.startMs, 0L)
+            return out
+        }
+    }
 }
 
 /** The words used for a call around the app: list rows, notifications, exports. */

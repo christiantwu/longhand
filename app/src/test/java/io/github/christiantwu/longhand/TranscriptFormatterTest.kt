@@ -7,6 +7,8 @@ import io.github.christiantwu.longhand.export.CallText
 import io.github.christiantwu.longhand.export.SpeakerNames
 import io.github.christiantwu.longhand.export.TranscriptFormatter
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -94,17 +96,58 @@ class TranscriptFormatterTest {
     }
 
     @Test fun speakerNamesPreferHandTypedThenOwnerThenCaller() {
-        val n = SpeakerNames(manual = mapOf(2 to "Dana"), owner = 1, callerName = "Jordan Ellis", speakers = setOf(0, 1))
+        val n = SpeakerNames(manual = mapOf(2 to "Dana"), owner = 1, callerName = "Jordan Ellis", speech = mapOf(0 to 5_500L, 1 to 2_000L))
         assertEquals("You", n.label(1))
         assertEquals("Jordan Ellis", n.label(0))
         assertEquals("Dana", n.label(2))
     }
 
-    @Test fun callerNameNeedsAKnownOwnerAndTwoVoices() {
-        assertEquals("Speaker 1", SpeakerNames(owner = null, callerName = "Jordan", speakers = setOf(0, 1)).label(0))
-        val three = SpeakerNames(owner = 0, callerName = "Jordan", speakers = setOf(0, 1, 2))
-        assertEquals("Speaker 2", three.label(1))
+    @Test fun callerNameNeedsAKnownOwner() {
+        val speech = mapOf(0 to 9_000L, 1 to 4_000L)
+        assertEquals("Speaker 1", SpeakerNames(owner = null, callerName = "Jordan", speech = speech).label(0))
+        // The owner's voice was found, but none of their lines are left (moved to someone else by hand).
+        assertNull(SpeakerNames(owner = 2, callerName = "Jordan", speech = speech).caller)
+        assertNull(SpeakerNames(owner = 0, callerName = null, speech = speech).caller)
         assertEquals("Speaker 3", SpeakerNames(manual = mapOf(2 to "  ")).label(2))
+    }
+
+    @Test fun callerNameGoesToTheOtherVoiceHeardMost() {
+        // You, the contact, and a few seconds of someone in the background, heard first: they stay "Speaker 2".
+        val n = SpeakerNames(owner = 0, callerName = "Jordan", speech = mapOf(1 to 3_000L, 0 to 60_000L, 2 to 45_000L))
+        assertEquals(2, n.caller)
+        assertEquals("Jordan", n.label(2))
+        assertEquals("Speaker 2", n.label(1))
+        assertEquals("You", n.label(0))
+        assertTrue(n.isUnnamed(1))
+        assertFalse(n.isUnnamed(2))
+        // Two who speak as long: the one heard first.
+        assertEquals(2, SpeakerNames(owner = 0, callerName = "Jordan", speech = mapOf(0 to 10_000L, 2 to 5_000L, 1 to 5_000L)).caller)
+        // Just the owner: nobody to name.
+        assertNull(SpeakerNames(owner = 0, callerName = "Jordan", speech = mapOf(0 to 10_000L)).caller)
+    }
+
+    @Test fun namesTypedByHandStillWinOverTheCallersName() {
+        val n = SpeakerNames(owner = 0, callerName = "Jordan", speech = mapOf(0 to 60_000L, 1 to 45_000L, 2 to 3_000L))
+        // The main voice named by hand: the caller's name doesn't move on to the other voice.
+        val named = n.copy(manual = mapOf(1 to "Riley"))
+        assertEquals("Riley", named.label(1))
+        assertEquals("Speaker 3", named.label(2))
+        // The caller's name typed for another voice: nobody else is shown with it.
+        val elsewhere = n.copy(manual = mapOf(2 to " jordan "))
+        assertNull(elsewhere.caller)
+        assertEquals("jordan", elsewhere.label(2))
+        assertEquals("Speaker 2", elsewhere.label(1))
+    }
+
+    @Test fun speechAddsUpEachSpeakersLinesInTheOrderTheyreFirstHeard() {
+        val lines = listOf(
+            Segment(id = 1, recordingId = 1, startMs = 5_000, endMs = 9_000, speaker = 2, text = "Sure."),
+            Segment(id = 2, recordingId = 1, startMs = 1_000, endMs = 2_000, speaker = 0, text = "Hello?"),
+            Segment(id = 3, recordingId = 1, startMs = 10_000, endMs = 13_500, speaker = 0, text = "See you then."),
+        )
+        val speech = SpeakerNames.speechOf(lines)
+        assertEquals(mapOf(0 to 4_500L, 2 to 4_000L), speech)
+        assertEquals(listOf(0, 2), speech.keys.toList())
     }
 
     @Test fun sentenceReadsLikeTheUsersExample() {
@@ -124,7 +167,7 @@ class TranscriptFormatterTest {
 
     @Test fun plainTextIncludesSummaryFollowUpsAndNames() {
         val r = rec.copy(contactName = "Jordan", topic = "roof estimate", summary = "You quoted the roof.", followUps = "Send quote\nCall back Friday", ownerSpeaker = 1)
-        val names = SpeakerNames(owner = 1, callerName = "Jordan", speakers = setOf(0, 1))
+        val names = SpeakerNames(owner = 1, callerName = "Jordan", speech = SpeakerNames.speechOf(segments))
         val text = TranscriptFormatter.format(r, segments, names, markdown = false)
         assertTrue(text.startsWith("Call with Jordan regarding roof estimate\n"))
         assertTrue(text.contains("You quoted the roof."))
@@ -143,7 +186,7 @@ class TranscriptFormatterTest {
     @Test fun summaryPromptPartsMatchTheEvaluatedFormat() {
         val r = rec.copy(contactName = "Jordan Ellis", callDirection = 1, durationMs = 185_000)
         assertEquals("caller: Jordan Ellis | direction: incoming | duration: 3:05", TranscriptFormatter.summaryHeader(r))
-        val lines = TranscriptFormatter.summaryLines(segments, SpeakerNames(owner = 1, callerName = "Jordan Ellis", speakers = setOf(0, 1)))
+        val lines = TranscriptFormatter.summaryLines(segments, SpeakerNames(owner = 1, callerName = "Jordan Ellis", speech = SpeakerNames.speechOf(segments)))
         assertEquals("[00:00] Jordan Ellis: Hi there. Calling about the roof.", lines[0])
         assertEquals("[01:23] You: Great, thanks.", lines[1])
     }

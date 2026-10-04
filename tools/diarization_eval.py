@@ -7,6 +7,7 @@ The steps mirror the app:
      over-clustered with FastClustering threshold 0.8)
   3. fingerprint and resolve the clusters into people like engine/SpeakerResolver.kt
   4. merge each person's consecutive speech like SegmentLogic.merge
+  5. make the turns not overlap like SegmentLogic.withoutOverlaps, as the app recognises each moment once
 
 Reference labels live in <samples>/labels.json:
   {"<file>": {"people": ["P1", "P2"], "owner": "P1", "turns": [{"start": 0.3, "end": 8.3, "person": "P1"}, ...]}}
@@ -310,6 +311,45 @@ def merge_turns(spans, max_gap=1.0):
     return out
 
 
+BACKCHANNEL_SECONDS = 1.5  # SegmentLogic.BACKCHANNEL_SEC
+MIN_PIECE_SECONDS = 0.2  # TranscriptionEngine.MIN_PIECE_SAMPLES
+
+
+def without_overlaps(turns, min_length=MIN_PIECE_SECONDS, backchannel=BACKCHANNEL_SECONDS):
+    """
+    SegmentLogic.withoutOverlaps: a turn of at most `backchannel` seconds lying within another speaker's goes; a
+    longer one keeps its span and cuts the outer turn in two; partly overlapping turns meet in the middle.
+    """
+    joined = []
+    for k in dict.fromkeys(t[2] for t in turns):
+        joined += merge_turns([t for t in turns if t[2] == k], max_gap=0.0)
+    joined = sorted((t for t in joined if t[1] > t[0]), key=lambda t: (t[0], t[1], t[2]))
+
+    def within(t, o):
+        return t[2] != o[2] and o[0] <= t[0] and t[1] <= o[1] and t[1] - t[0] < o[1] - o[0]
+
+    kept = [t for t in joined if t[1] - t[0] > backchannel or not any(within(t, o) for o in joined)]
+    starts, ends = [t[0] for t in kept], [t[1] for t in kept]
+    for i, a in enumerate(kept):
+        for j in range(i + 1, len(kept)):
+            b = kept[j]
+            if b[0] >= a[1]:
+                break
+            if within(a, b) or within(b, a):
+                continue
+            middle = (b[0] + min(a[1], b[1])) / 2
+            ends[i] = min(ends[i], middle)
+            starts[j] = max(starts[j], middle)
+    pieces = []
+    for i, t in enumerate(kept):
+        parts = [(starts[i], ends[i])]
+        for j, inner in enumerate(kept):
+            if within(inner, t):
+                parts = [p for a, b in parts for p in ((a, min(b, starts[j])), (max(a, ends[j]), b)) if p[1] > p[0]]
+        pieces += [(a, b, t[2]) for a, b in parts]
+    return merge_turns([p for p in pieces if p[1] - p[0] >= min_length])
+
+
 # ---- scoring ----
 
 def overlap(a0, a1, b0, b1):
@@ -438,7 +478,7 @@ def evaluate(case_list, labels, calls, fps, cfg, use_owner):
         plan = fingerprint_plan(spans, cfg)
         prints = {c: v for c, parts in plan.items() if (v := fps(key, audio, parts)) is not None}
         owner = owner_voiceprint(base, labels, calls, fps) if use_owner and owner_person else None
-        turns = merge_turns(resolve(spans, prints, owner, cfg))
+        turns = without_overlaps(merge_turns(resolve(spans, prints, owner, cfg)))
         acc, mapping, cover, coverage = score(turns, ref)
         people = len({r["person"] for r in ref})
         seconds = {k: sum(e - s for s, e, kk in turns if kk == k) for k in sorted({t[2] for t in turns})}

@@ -434,7 +434,7 @@ class TranscribeWorker(context: Context, params: WorkerParameters) : CoroutineWo
                     manual = dao.speakerNames(rec.id).associate { it.speaker to it.name },
                     owner = rec.ownerSpeaker,
                     callerName = CallText.caller(rec, format),
-                    speakers = segments.map { it.speaker }.toSet(),
+                    speech = SpeakerNames.speechOf(segments),
                 )
                 // In the call's language, from what detection heard and the transcript's model and script; read for
                 // every call, so turning the setting off takes effect from the next summary.

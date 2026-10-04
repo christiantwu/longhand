@@ -41,6 +41,26 @@ class SeparationTest {
         assertEquals(listOf(0.4f, 0.2f), stereo.mono.toList())
     }
 
+    @Test fun monoTurnsDontOverlapAndSpeakersLeftWithoutTurnsAreGone() {
+        val first = floatArrayOf(1f, 0f)
+        val stray = floatArrayOf(0f, 1f)
+        val second = floatArrayOf(0.6f, 0.8f)
+        // Resolved spans (speaker ids as the resolver numbered them): 7 talks first and is heard twice at once at
+        // 3-4 s; 3 only says "mm-hmm" over them; 5 answers over the end of 7's turn.
+        val spans = listOf(Span(0f, 4f, 7), Span(1f, 2f, 3), Span(3f, 10f, 7), Span(9f, 15f, 5), Span(20f, 21f, 3))
+        val found = Separation.mono(spans, mapOf(7 to first, 3 to stray, 5 to second), listOf(0 to 240_000))
+        // 3's last "mm-hmm" is said over nobody, so they're still a speaker: numbered by when they're first heard now.
+        assertEquals(listOf(Span(0f, 9.5f, 0), Span(9.5f, 15f, 1), Span(20f, 21f, 2)), found.turns.map { it.span })
+        assertTrue(found.turns.all { it.channel == null })
+        assertEquals(mapOf(0 to first, 1 to second, 2 to stray), found.voices)
+        assertEquals(listOf(0 to 240_000), found.speech)
+
+        // Without it, 3 has no turns left: no number and no voice (it can't be picked as the owner).
+        val without = Separation.mono(spans.dropLast(1), mapOf(7 to first, 3 to stray, 5 to second), emptyList())
+        assertEquals(listOf(Span(0f, 9.5f, 0), Span(9.5f, 15f, 1)), without.turns.map { it.span })
+        assertEquals(mapOf(0 to first, 1 to second), without.voices)
+    }
+
     @Test fun usedOnceForTheSameCallUnchangedWithTheSameVoiceprint() {
         val cache = SeparationCache(8)
         val kept = separation()

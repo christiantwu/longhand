@@ -15,14 +15,16 @@ class VoiceSuggestionsTest {
     private val erin = KnownVoiceCentroid(KnownVoiceRow(2, "Erin Shaw", 1), floatArrayOf(0f, 1f, 0f))
     private val known = listOf(dana, erin)
 
-    // A conference call: speaker 0 is the owner, 1 sounds like Dana, 2 like Erin, 3 like nobody known.
+    // A conference call: speaker 0 is the owner, 1 sounds like Dana, 2 like Erin, 3 like nobody known. 3 speaks longest
+    // after the owner, so is shown with the caller's name.
     private val voices = mapOf(
         0 to floatArrayOf(0f, 0f, 1f),
         1 to floatArrayOf(0.8f, 0.1f, 0.59f),
         2 to floatArrayOf(0.1f, 0.9f, 0.42f),
         3 to floatArrayOf(0.3f, 0.3f, 0.9f),
     )
-    private val names = SpeakerNames(owner = 0, callerName = "Conference", speakers = setOf(0, 1, 2, 3))
+    private val names = SpeakerNames(owner = 0, callerName = "Morgan Avery",
+        speech = mapOf(0 to 120_000L, 1 to 30_000L, 2 to 20_000L, 3 to 90_000L))
 
     @Test fun suggestsForSpeakersStillShownAsSpeakerN() {
         assertEquals(
@@ -47,15 +49,29 @@ class VoiceSuggestionsTest {
     }
 
     @Test fun notForTheCallerNamedAutomatically() {
-        val twoPeople = SpeakerNames(owner = 0, callerName = "Dana Whitfield", speakers = setOf(0, 1))
+        val twoPeople = SpeakerNames(owner = 0, callerName = "Dana Whitfield", speech = mapOf(0 to 60_000L, 1 to 40_000L))
         assertEquals(emptyMap<Int, VoiceSuggestion>(), voiceSuggestions(twoPeople, voices, known, emptyMap()))
+        // Shown as the caller, Morgan, though it sounds like Erin: no suggestion either.
+        val morgan = SpeakerNames(owner = 0, callerName = "Morgan Avery", speech = mapOf(0 to 60_000L, 2 to 40_000L))
+        assertEquals(emptyMap<Int, VoiceSuggestion>(), voiceSuggestions(morgan, voices, known, emptyMap()))
         // Without a known owner the caller's name isn't applied, so the voice is suggested.
         assertEquals(setOf(1), voiceSuggestions(twoPeople.copy(owner = null), voices, known, emptyMap()).keys)
+        // With other voices on the call too, the caller's name still goes to whoever else speaks longest.
+        val dana = names.copy(callerName = "Dana Whitfield", speech = names.speech + (1 to 100_000L))
+        assertEquals(mapOf(2 to VoiceSuggestion(2, "Erin Shaw", 1)), voiceSuggestions(dana, voices, known, emptyMap()))
+    }
+
+    @Test fun notTheCallersNameShownForAnotherSpeaker() {
+        // Speaker 3 is shown as Dana, the caller: speaker 1, who sounds like her, isn't offered her name too.
+        val dana = names.copy(callerName = "Dana Whitfield")
+        assertEquals(mapOf(2 to VoiceSuggestion(2, "Erin Shaw", 1)), voiceSuggestions(dana, voices, known, emptyMap()))
+        // Once speaker 3 is named something else by hand, nobody is shown as Dana.
+        assertEquals(setOf(1, 2), voiceSuggestions(dana.copy(manual = mapOf(3 to "Sam")), voices, known, emptyMap()).keys)
     }
 
     @Test fun eachKnownVoiceGoesToOneSpeakerOnly() {
         // Speaker 4 also sounds like Dana, a little less than speaker 1: one person isn't two speakers.
-        val five = names.copy(speakers = names.speakers + 4)
+        val five = names.copy(speech = names.speech + (4 to 10_000L))
         val withFourth = voices + (4 to floatArrayOf(0.7f, 0.05f, 0.6f))
         assertEquals(setOf(1, 2), voiceSuggestions(five, withFourth, known, emptyMap()).keys)
         // Once speaker 1 turns Dana down, speaker 4 is the one most like her.

@@ -29,6 +29,60 @@ object SegmentLogic {
     }
 
     /**
+     * Speaker turns made not to overlap, so that each moment is recognised once: turns heard on the mono mix that
+     * overlap would have the overlap transcribed twice, the same words under both speakers.
+     * - A turn of at most [backchannel] seconds lying within another speaker's (an "mm-hmm" said over them) goes, and
+     *   the surrounding turn keeps its audio.
+     * - A longer turn lying within another speaker's keeps its span, and the outer turn is cut into the parts before
+     *   and after it.
+     * - Two turns that partly overlap meet in the middle of the overlap.
+     *
+     * A speaker's own turns that overlap are joined first. Pieces left shorter than [minLength] seconds go (too short
+     * to recognise), and what's left of a speaker's speech joins up again as [merge] joins it, where nobody else now
+     * speaks in between: two parts of a sentence an "mm-hmm" kept apart. A speaker may be left with no turns at all.
+     */
+    fun withoutOverlaps(turns: List<Span>, minLength: Float, backchannel: Float = BACKCHANNEL_SEC): List<Span> {
+        val joined = turns.groupBy { it.speaker }.values.flatMap { merge(it, maxGap = 0f) }
+            .filter { it.end > it.start }
+            .sortedWith(compareBy<Span>({ it.start }, { it.end }, { it.speaker }))
+        // Shorter, and inside the other's span.
+        fun Span.within(o: Span) = speaker != o.speaker && o.start <= start && end <= o.end && duration < o.duration
+        val kept = joined.filter { t -> t.duration > backchannel || joined.none { t.within(it) } }
+
+        // Partly overlapping turns (or two with the same span) meet in the middle of the overlap: the one that starts
+        // first ends there, the other starts there. A turn's middles with turns starting before it all come before its
+        // middles with turns starting after it, so none ends before it starts.
+        val starts = FloatArray(kept.size) { kept[it].start }
+        val ends = FloatArray(kept.size) { kept[it].end }
+        for (i in kept.indices) {
+            for (j in i + 1 until kept.size) {
+                val a = kept[i]
+                val b = kept[j]
+                if (b.start >= a.end) break
+                if (a.within(b) || b.within(a)) continue
+                val middle = (b.start + minOf(a.end, b.end)) / 2
+                ends[i] = minOf(ends[i], middle)
+                starts[j] = maxOf(starts[j], middle)
+            }
+        }
+        // A turn lying within another keeps its span, which the outer turn loses.
+        val pieces = kept.indices.flatMap { i ->
+            var parts = listOf(starts[i] to ends[i])
+            for (j in kept.indices) {
+                if (!kept[j].within(kept[i])) continue
+                parts = parts.flatMap { (a, b) ->
+                    listOf(a to minOf(b, starts[j]), maxOf(a, ends[j]) to b).filter { it.second > it.first }
+                }
+            }
+            parts.map { (a, b) -> Span(a, b, kept[i].speaker) }
+        }
+        return merge(pieces.filter { it.duration >= minLength })
+    }
+
+    /** At most this long (seconds) and said within someone else's turn, a turn is an "mm-hmm": [withoutOverlaps]. */
+    const val BACKCHANNEL_SEC = 1.5f
+
+    /**
      * Renumbers speakers in order of first appearance, so whoever talks first is
      * speaker 0 ("Speaker 1"). The diarizer's cluster ids are otherwise arbitrary.
      */

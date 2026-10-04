@@ -31,6 +31,29 @@ class Separation(
     /** Each turn with the samples it's heard in. */
     fun turnsIn(audio: DecodedAudio): List<Pair<Span, FloatArray>> =
         turns.map { turn -> turn.span to (turn.channel?.let { audio.channels[it] } ?: audio.mono) }
+
+    companion object {
+        /** The shortest piece of a turn that's recognised, in seconds. */
+        private const val MIN_PIECE_SEC = TranscriptionEngine.MIN_PIECE_SAMPLES.toFloat() / MODEL_SAMPLE_RATE
+
+        /**
+         * Turns heard on the mono mix, from who spoke when ([spans]) with each speaker's [voices]: each speaker's
+         * speech joined up ([SegmentLogic.merge]), then made not to overlap ([SegmentLogic.withoutOverlaps]), as the
+         * mono mix has every voice in it and an overlap would be transcribed twice. Speakers are numbered in the order
+         * they're first heard; one left with no turns (everything they said was said over someone else) is gone, voice
+         * and all, so it can't be taken for the owner or leave a gap in the numbers.
+         */
+        fun mono(spans: List<Span>, voices: Map<Int, FloatArray>, speech: List<Pair<Int, Int>>): Separation {
+            val turns = SegmentLogic.withoutOverlaps(SegmentLogic.merge(spans), MIN_PIECE_SEC)
+            val numbered = SegmentLogic.relabelByFirstAppearance(turns)
+            val renumber = turns.zip(numbered).associate { (a, b) -> a.speaker to b.speaker }
+            return Separation(
+                numbered.map { Turn(it) },
+                voices.entries.mapNotNull { (speaker, v) -> renumber[speaker]?.let { it to v } }.toMap(),
+                speech,
+            )
+        }
+    }
 }
 
 /**
@@ -75,38 +98,36 @@ class SpeakerSeparation(context: Context) : Closeable {
         val stereo = audio.channels.size == 2 &&
             StereoAnalysis.channelsAreDistinct(audio.channels[0], audio.channels[1])
         Log.i(TAG, "transcribe: ${audio.durationMs} ms, channels=${audio.channels.size}, stereoSpeakers=$stereo")
-        val found = if (stereo) stereoTurns(audio) else monoTurns(audio.mono, owner, onProgress, isStopped)
-        // A speaker with too little clean speech for a fingerprint of their own keeps the one
-        // speaker separation made, so the owner can still be recognised among them.
-        return Separation(found.turns, found.voices + voiceAnalyzer.voices(found.turnsIn(audio)), found.speech,
-            audio.sampleCount, audio.channels.size)
+        val found = if (stereo) stereoTurns(audio) else monoTurns(audio, owner, onProgress, isStopped)
+        return Separation(found.turns, found.voices, found.speech, audio.sampleCount, audio.channels.size)
     }
 
     /** Who spoke when, from voice clustering over the whole call. */
-    private fun monoTurns(samples: FloatArray, owner: FloatArray?, onProgress: (Float) -> Unit, isStopped: () -> Boolean): Separation {
+    private fun monoTurns(audio: DecodedAudio, owner: FloatArray?, onProgress: (Float) -> Unit, isStopped: () -> Boolean): Separation {
+        val samples = audio.mono
         val raw = diarizer.processWithCallback(samples, DiarizationProgress(onProgress), 0L)
             .map { Span(it.start, it.end, it.speaker) }
         if (isStopped()) throw CancellationException()
         // Very short or single-voice clips can come back empty; fall back to plain speech detection.
         if (raw.isEmpty()) {
-            return ofTurns(SegmentLogic.merge(speechSpans(samples, 0, samples.size, speaker = 0)).map { Separation.Turn(it) }, samples.size)
+            return ofTurns(SegmentLogic.merge(speechSpans(samples, 0, samples.size, speaker = 0)).map { Separation.Turn(it) }, audio)
         }
 
         val fingerprints = SpeakerResolver.fingerprintPlan(raw)
             .mapNotNull { (cluster, parts) -> voiceAnalyzer.fingerprint(samples, parts)?.let { cluster to it } }
             .toMap()
         val resolved = SpeakerResolver.resolve(raw, fingerprints, owner)
-        val numbered = SegmentLogic.relabelByFirstAppearance(resolved.spans)
-        val renumber = resolved.spans.zip(numbered).associate { (a, b) -> a.speaker to b.speaker }
-        Log.i(TAG, "speakers: ${raw.map { it.speaker }.distinct().size} clusters, " +
-            "${fingerprints.size} fingerprinted, ${renumber.size} people")
-        return Separation(
-            SegmentLogic.merge(numbered).map { Separation.Turn(it) },
-            resolved.voices.entries.mapNotNull { (speaker, v) -> renumber[speaker]?.let { it to v } }.toMap(),
+        // A speaker with too little clean speech for a fingerprint of their own keeps the one speaker separation made,
+        // so the owner can still be recognised among them. Taken from the turns before they're made not to overlap,
+        // which still show where someone else talks over a speaker (their voice would be mixed in).
+        val voices = resolved.voices + voiceAnalyzer.voices(SegmentLogic.merge(resolved.spans).map { it to samples })
+        val found = Separation.mono(resolved.spans, voices,
             // Everything diarization heard anyone say, padded as recognition pads speech: it hears quieter and noisier
             // voices than speech detection does.
-            CallLanguage.speech(raw, samples.size, SpeechRanges.PAD_BEFORE, SpeechRanges.PAD_AFTER),
-        )
+            CallLanguage.speech(raw, samples.size, SpeechRanges.PAD_BEFORE, SpeechRanges.PAD_AFTER))
+        Log.i(TAG, "speakers: ${raw.map { it.speaker }.distinct().size} clusters, " +
+            "${fingerprints.size} fingerprinted, ${found.turns.map { it.span.speaker }.distinct().size} people")
+        return found
     }
 
     /** Each side of the call on its own channel: the channel is the speaker. */
@@ -123,12 +144,17 @@ class SpeakerSeparation(context: Context) : Closeable {
             }
             SegmentLogic.merge(spans).forEach { out += Separation.Turn(it, channel = ch) }
         }
-        return ofTurns(out.sortedBy { it.span.start }, audio.channels.minOf { it.size })
+        return ofTurns(out.sortedBy { it.span.start }, audio)
     }
 
-    /** [turns] found without diarization, whose speech is where they are; the mono mix is [length] samples long. */
-    private fun ofTurns(turns: List<Separation.Turn>, length: Int) =
-        Separation(turns, emptyMap(), CallLanguage.speech(turns.map { it.span }, length))
+    /**
+     * [turns] of [audio] found without diarization, whose speech is where they are, with each speaker's voice from what
+     * they say in them that nobody says over.
+     */
+    private fun ofTurns(turns: List<Separation.Turn>, audio: DecodedAudio): Separation {
+        val found = Separation(turns, emptyMap(), CallLanguage.speech(turns.map { it.span }, audio.channels.minOf { it.size }))
+        return Separation(turns, voiceAnalyzer.voices(found.turnsIn(audio)), found.speech)
+    }
 
     /**
      * Speech regions as spans, padded a little: speech detection reacts slightly after a word

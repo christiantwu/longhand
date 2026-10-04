@@ -98,14 +98,16 @@ class KnownVoiceCentroid(val voice: KnownVoiceRow, val centroid: FloatArray)
 /**
  * The known voice to suggest for each speaker of one call who is still shown as "Speaker N" and has
  * a stored [voices] entry ([VoiceMath.suggest]). A name already given to someone in this call is
- * never suggested, nor one [rejected] for that speaker.
+ * never suggested (the caller's, shown for the [SpeakerNames.caller], included), nor one [rejected]
+ * for that speaker.
  */
 fun voiceSuggestions(
     names: SpeakerNames, voices: Map<Int, FloatArray>, known: List<KnownVoiceCentroid>, rejected: Map<Int, Set<Long>>,
 ): Map<Int, VoiceSuggestion> {
     if (known.isEmpty()) return emptyMap()
     val centroids = known.associate { it.voice.id to it.centroid }
-    val given = names.manual.values.map { it.trim() }.filter { it.isNotEmpty() }
+    val shown = names.caller?.let { names.label(it) }
+    val given = (names.manual.values + listOfNotNull(shown)).map { it.trim() }.filter { it.isNotEmpty() }
     val inThisCall = known.filter { k -> given.any { it.equals(k.voice.name, ignoreCase = true) } }.map { it.voice.id }.toSet()
     class Pick(val speaker: Int, val voiceId: Long, val score: Float)
     val picks = names.speakers.sorted().mapNotNull { speaker ->
@@ -202,7 +204,7 @@ class TranscriptViewModel(app: Application, savedState: SavedStateHandle) : Andr
             manual = manual.associate { it.speaker to it.name },
             owner = rec?.ownerSpeaker,
             callerName = rec?.let { CallText.caller(it, format) },
-            speakers = segs.map { it.speaker }.toSet(),
+            speech = SpeakerNames.speechOf(segs),
         )
     }.stateIn(viewModelScope, SharingStarted.Eagerly, null to SpeakerNames())
 
@@ -541,7 +543,7 @@ class TranscriptViewModel(app: Application, savedState: SavedStateHandle) : Andr
 
     /**
      * "Same person as…": everything [from] said is [into]'s. The message names nobody: a merge can change the name
-     * shown (a name or the You label moves with the lines, and the caller's name comes back on a two-person call).
+     * shown (a name or the You label moves with the lines, and the caller's name goes to whoever else now speaks longest).
      */
     fun mergeSpeakers(from: Int, into: Int, transcript: Long?) = change(speakers = true) {
         dao.mergeSpeakers(id, transcript, from, into, resummarizes())?.let { it to "Speakers merged" }

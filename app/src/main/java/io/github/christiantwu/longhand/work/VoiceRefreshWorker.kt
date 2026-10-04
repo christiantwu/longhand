@@ -39,6 +39,8 @@ class VoiceRefreshWorker(context: Context, params: WorkerParameters) : Coroutine
                 (1..3).any {
                     if (isStopped) return Result.success()
                     val lines = dao.segments(id)
+                    // The stored lines no longer overlap (a short "yeah" said over someone is left in their line), so a
+                    // voice re-learned here can hold a moment of someone else; the ones learned when transcribing don't.
                     val voices = analyzer.voices(lines.map { Span(it.startMs / 1000f, it.endMs / 1000f, it.speaker) to audio.mono })
                     dao.replaceVoices(id, rec.transcribedAt, lines, voices.toSpeakerVoices(id))
                 }

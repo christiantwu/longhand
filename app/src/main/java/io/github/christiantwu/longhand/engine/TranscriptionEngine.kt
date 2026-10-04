@@ -162,9 +162,11 @@ class TranscriptionEngine(context: Context, speech: Models.Set) : Closeable {
         streaming?.close()
     }
 
-    private companion object {
-        const val SR = MODEL_SAMPLE_RATE.toFloat()
-        const val MAX_PIECE_SEC = 25f
-        const val MIN_PIECE_SAMPLES = MODEL_SAMPLE_RATE / 5 // 200 ms
+    companion object {
+        private const val SR = MODEL_SAMPLE_RATE.toFloat()
+        private const val MAX_PIECE_SEC = 25f
+
+        /** The shortest piece recognised (200 ms); speaker separation leaves out shorter pieces of turns too. */
+        const val MIN_PIECE_SAMPLES = MODEL_SAMPLE_RATE / 5
     }
 }
