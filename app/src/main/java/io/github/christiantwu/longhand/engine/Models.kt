@@ -47,11 +47,17 @@ object Models {
      * the speaker models and differ in their recognizer; summaries are optional.
      */
     enum class Set(val files: List<ModelFile>, val recognizerDir: String? = null) {
-        /** English: Parakeet TDT 0.6B v2, the most accurate of the two for English. */
+        /**
+         * English: Parakeet TDT 0.6B v2, the most accurate of the two for English. The encoder is Longhand's own int8
+         * quantization of sherpa-onnx's fp32 export, made like the European languages' (tools/requantize_parakeet.py v2,
+         * see [MULTILINGUAL]); on phone calls in the Phone app's default recording it makes about 11% fewer errors than
+         * sherpa-onnx's int8 encoder. Earlier installs have that encoder, which keeps working until this one is in place.
+         */
         SPEECH(
             listOf(
-                ModelFile("parakeet/encoder.int8.onnx", "$PARAKEET/encoder.int8.onnx", 652_184_296,
-                    "a32b12d17bbbc309d0686fbbcc2987b5e9b8333a7da83fa6b089f0a2acd651ab"),
+                ModelFile("parakeet/encoder.repaired.int8.onnx", "$LONGHAND/parakeet-tdt-0.6b-v2-encoder.int8.onnx",
+                    665_796_732, "0db696759cccf970a2fb532948bd9c43af576c51551cfcff71ed955f926d8413",
+                    replaces = Replaced("parakeet/encoder.int8.onnx", 652_184_296)),
                 ModelFile("parakeet/decoder.int8.onnx", "$PARAKEET/decoder.int8.onnx", 7_257_753,
                     "b6bb64963457237b900e496ee9994b59294526439fbcc1fecf705b31a15c6b4e"),
                 ModelFile("parakeet/joiner.int8.onnx", "$PARAKEET/joiner.int8.onnx", 1_739_080,
@@ -64,7 +70,7 @@ object Models {
 
         /**
          * 25 European languages, detected per call: Parakeet TDT 0.6B v3. The encoder is Longhand's own int8
-         * quantization of sherpa-onnx's fp32 export (tools/requantize_parakeet_v3.py): sherpa-onnx's int8 encoder
+         * quantization of sherpa-onnx's fp32 export (tools/requantize_parakeet.py v3): sherpa-onnx's int8 encoder
          * quantizes the pre-encode (subsampling) stage and the depthwise convolutions too, which costs a lot of accuracy, most on phone
          * audio. Earlier installs have that encoder, which keeps working until this one is in place.
          */

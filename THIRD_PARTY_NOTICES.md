@@ -157,7 +157,7 @@ their own licences:
 
 | Model | Licence | Source |
 |---|---|---|
-| NVIDIA Parakeet TDT 0.6B v2 (int8 ONNX conversion by sherpa-onnx) | CC-BY-4.0 | [nvidia/parakeet-tdt-0.6b-v2](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2) |
+| NVIDIA Parakeet TDT 0.6B v2 (ONNX conversion by sherpa-onnx, encoder re-quantized by Longhand, see below; only with "English") | CC-BY-4.0 | [nvidia/parakeet-tdt-0.6b-v2](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2) |
 | NVIDIA Parakeet TDT 0.6B v3 (ONNX conversion by sherpa-onnx, encoder re-quantized by Longhand, see below; only with "25 European languages") | CC-BY-4.0 | [nvidia/parakeet-tdt-0.6b-v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) |
 | Alibaba FunAudioLLM SenseVoice Small (int8 ONNX conversion by sherpa-onnx; only with "Chinese, Japanese and Korean") | [FunASR Model Open Source License Agreement 1.1](https://github.com/modelscope/FunASR/blob/main/MODEL_LICENSE) | [FunAudioLLM/SenseVoiceSmall](https://huggingface.co/FunAudioLLM/SenseVoiceSmall) |
 | NVIDIA Nemotron 3.5 ASR Streaming 0.6B (int8 ONNX conversion by sherpa-onnx with 1120 ms chunks, unmodified, hosted by Longhand, see below; only with "Hindi") | [OpenMDW-1.1](app/src/main/assets/licenses/OpenMDW-1.1.txt) | [nvidia/nemotron-3.5-asr-streaming-0.6b](https://huggingface.co/nvidia/nemotron-3.5-asr-streaming-0.6b) |
@@ -166,20 +166,24 @@ their own licences:
 | Silero VAD | MIT | [snakers4/silero-vad](https://github.com/snakers4/silero-vad) |
 | Qwen3.5 4B, Q4_0 GGUF by Unsloth | Apache-2.0 | [Qwen/Qwen3.5-4B](https://huggingface.co/Qwen/Qwen3.5-4B) |
 
-**Parakeet TDT 0.6B v3 is modified.** Its encoder was re-quantized to int8 by Longhand from sherpa-onnx's
-full-precision ONNX conversion of NVIDIA's model
-([csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3](https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3),
+**Parakeet TDT 0.6B v2 and v3 are modified.** Their encoders were re-quantized to int8 by Longhand from
+sherpa-onnx's full-precision ONNX conversions of NVIDIA's models
+([csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2](https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2),
+commit `86891485`, and
+[csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3](https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3),
 commit `1a468a35`): the whole pre-encode (subsampling) stage, its convolutions and output projection, and the
 depthwise convolutions are kept in full precision, where
-sherpa-onnx's own int8 encoder quantizes them too. The recipe is
-[`tools/requantize_parakeet_v3.py`](tools/requantize_parakeet_v3.py). The modified encoder is downloaded
+sherpa-onnx's own int8 encoders quantize them too. The recipe is
+[`tools/requantize_parakeet.py`](tools/requantize_parakeet.py). The modified encoders are downloaded
 from Longhand's GitHub release
-[models-1](https://github.com/christiantwu/longhand/releases/tag/models-1); the decoder, joiner and
-tokens are sherpa-onnx's int8 conversion, unmodified, downloaded from
+[models-1](https://github.com/christiantwu/longhand/releases/tag/models-1); the decoders, joiners and
+tokens are sherpa-onnx's int8 conversions, unmodified, downloaded from
+[csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8](https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8)
+and
 [csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8](https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8).
-The model is licensed by NVIDIA under the
+The models are licensed by NVIDIA under the
 [Creative Commons Attribution 4.0 International licence](https://creativecommons.org/licenses/by/4.0/),
-and is provided as-is, without warranties.
+and are provided as-is, without warranties.
 
 **Nemotron 3.5 ASR Streaming 0.6B is hosted by Longhand, unmodified.** sherpa-onnx publishes its int8 ONNX
 conversion of NVIDIA's model only inside one archive,

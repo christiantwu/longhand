@@ -175,7 +175,7 @@
     "name": "Parakeet TDT 0.6B v2",
     "version": "int8",
     "license": "CC-BY-4.0",
-    "copyright": "NVIDIA. Converted to ONNX by the sherpa-onnx project. Downloaded when English is chosen. Licensed under CC BY 4.0 (creativecommons.org/licenses/by/4.0), provided as is, without warranties.",
+    "copyright": "NVIDIA. Converted to ONNX by the sherpa-onnx project. Modified by Longhand: the encoder was re-quantized to int8 from sherpa-onnx's full-precision conversion, keeping the whole pre-encode (subsampling) stage and the depthwise convolutions in full precision (tools/requantize_parakeet.py in Longhand's repository). Downloaded when English is chosen: the encoder from Longhand's GitHub releases (github.com/christiantwu/longhand/releases/tag/models-1), the decoder, joiner and tokens from sherpa-onnx's int8 conversion on Hugging Face (huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8). Licensed under CC BY 4.0 (creativecommons.org/licenses/by/4.0), provided as is, without warranties.",
     "source": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2",
     "file": ""
   },
@@ -184,7 +184,7 @@
     "name": "Parakeet TDT 0.6B v3",
     "version": "int8",
     "license": "CC-BY-4.0",
-    "copyright": "NVIDIA. Converted to ONNX by the sherpa-onnx project. Modified by Longhand: the encoder was re-quantized to int8 from sherpa-onnx's full-precision conversion, keeping the whole pre-encode (subsampling) stage and the depthwise convolutions in full precision (tools/requantize_parakeet_v3.py in Longhand's repository). Downloaded when 25 European languages is chosen: the encoder from Longhand's GitHub releases (github.com/christiantwu/longhand/releases/tag/models-1), the decoder, joiner and tokens from sherpa-onnx's int8 conversion on Hugging Face (huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8). Licensed under CC BY 4.0 (creativecommons.org/licenses/by/4.0), provided as is, without warranties.",
+    "copyright": "NVIDIA. Converted to ONNX by the sherpa-onnx project. Modified by Longhand: the encoder was re-quantized to int8 from sherpa-onnx's full-precision conversion, keeping the whole pre-encode (subsampling) stage and the depthwise convolutions in full precision (tools/requantize_parakeet.py in Longhand's repository). Downloaded when 25 European languages is chosen: the encoder from Longhand's GitHub releases (github.com/christiantwu/longhand/releases/tag/models-1), the decoder, joiner and tokens from sherpa-onnx's int8 conversion on Hugging Face (huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8). Licensed under CC BY 4.0 (creativecommons.org/licenses/by/4.0), provided as is, without warranties.",
     "source": "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3",
     "file": ""
   },

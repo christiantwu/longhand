@@ -76,16 +76,16 @@ summaries can contain mistakes, so check anything important against the recordin
 
 ## Models
 
-- **Speech-to-text:** NVIDIA Parakeet TDT 0.6B v2 (int8) for English, or, chosen in Settings,
-  Parakeet TDT 0.6B v3 (int8, with its encoder re-quantized by Longhand, see below) for 25 European
-  languages, detected per call: Bulgarian, Croatian, Czech, Danish, Dutch, English, Estonian,
-  Finnish, French, German, Greek, Hungarian, Italian, Latvian, Lithuanian, Maltese, Polish,
-  Portuguese, Romanian, Russian, Slovak, Slovenian, Spanish, Swedish and Ukrainian. Or SenseVoice
-  Small (int8) for Chinese (Mandarin and Cantonese), Japanese, Korean and English, also detected per
-  call. Or NVIDIA Nemotron 3.5 ASR Streaming 0.6B (int8, 1120 ms chunks) for Hindi and English,
-  detected for each turn, including calls that mix them; English words in Hindi sentences are
-  written in Devanagari. Only the chosen one is kept; while a new choice downloads, the old one
-  keeps transcribing.
+- **Speech-to-text:** NVIDIA Parakeet TDT 0.6B v2 (int8, with its encoder re-quantized by Longhand,
+  see below) for English, or, chosen in Settings, Parakeet TDT 0.6B v3 (int8, its encoder
+  re-quantized the same way) for 25 European languages, detected per call: Bulgarian, Croatian,
+  Czech, Danish, Dutch, English, Estonian, Finnish, French, German, Greek, Hungarian, Italian,
+  Latvian, Lithuanian, Maltese, Polish, Portuguese, Romanian, Russian, Slovak, Slovenian, Spanish,
+  Swedish and Ukrainian. Or SenseVoice Small (int8) for Chinese (Mandarin and Cantonese), Japanese,
+  Korean and English, also detected per call. Or NVIDIA Nemotron 3.5 ASR Streaming 0.6B (int8,
+  1120 ms chunks) for Hindi and English, detected for each turn, including calls that mix them;
+  English words in Hindi sentences are written in Devanagari. Only the chosen one is kept; while a
+  new choice downloads, the old one keeps transcribing.
 - **Who spoke when:** pyannote segmentation 3.0 + NeMo TitaNet speaker embeddings
 - **Pause detection:** Silero VAD
 - **Speech runtime:** [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) 1.13.8 (ONNX Runtime, CPU)
@@ -93,7 +93,7 @@ summaries can contain mistakes, so check anything important against the recordin
   [llama.cpp](https://github.com/ggml-org/llama.cpp) b11308, compiled into the app
 
 The models are downloaded from the setup screen: the speech models for the chosen language
-(~710 MB for English, ~730 MB for the European languages, ~290 MB for Chinese, Japanese and
+(~720 MB for English, ~730 MB for the European languages, ~290 MB for Chinese, Japanese and
 Korean, or ~730 MB for Hindi, the speaker models included; required) and the summary model
 (~2.6 GB, optional). Choosing another language later in Settings downloads its recognizer
 (240–690 MB) and then deletes the old one. Downloads wait for Wi-Fi (an unmetered connection)
@@ -101,19 +101,21 @@ unless you choose to go ahead on mobile data or a metered network. Summaries fol
 prompt, so a call in another language may still get its summary in English. After that you can
 turn off the app's Network permission in GrapheneOS.
 
-**The European languages encoder is Longhand's own.** sherpa-onnx's int8 conversion of Parakeet
-v3 quantizes every convolution in the encoder, and that costs a lot of accuracy, most of all on
-phone audio. Longhand quantizes sherpa-onnx's full-precision conversion itself, keeping the
-whole pre-encode (subsampling) stage and the depthwise convolutions in full precision
-(`tools/requantize_parakeet_v3.py`), and
-downloads the result from its own
-[GitHub release](https://github.com/christiantwu/longhand/releases/tag/models-1). The decoder,
-joiner and tokens are sherpa-onnx's, unchanged. On FLEURS, across all 25 languages, the word error
-rate fell from 18.1% to 11.9% on wideband audio and from 34.0% to 14.9% on audio coded like the
-Phone app's default recordings; no language got worse. Phones that downloaded the European
-languages with an earlier version keep transcribing with the old encoder while the new one
-(~670 MB) downloads over Wi-Fi, and the old one is deleted once the new one is in and checked. If
-you turned off the Network permission, turn it back on for the update.
+**The English and European languages encoders are Longhand's own.** sherpa-onnx's int8
+conversions of Parakeet v2 and v3 quantize every convolution in the encoder, and that costs
+accuracy, most of all on phone audio. Longhand quantizes sherpa-onnx's full-precision conversions
+itself, keeping the whole pre-encode (subsampling) stage and the depthwise convolutions in full
+precision (`tools/requantize_parakeet.py`), and downloads the results from its own
+[GitHub release](https://github.com/christiantwu/longhand/releases/tag/models-1). The decoders,
+joiners and tokens are sherpa-onnx's, unchanged. The European languages model needed this most: on
+FLEURS, across all 25 languages, the word error rate fell from 18.1% to 11.9% on wideband audio and
+from 34.0% to 14.9% on audio coded like the Phone app's default recordings; no language got worse.
+For English, on recorded phone conversations coded like the default recordings, it fell from 7.7%
+to 6.9%, about 11% fewer errors, with smaller gains elsewhere. Both are also about 30% faster in
+desktop tests. Phones that downloaded English or the European languages with an earlier version
+keep transcribing with the old encoder while the new one (~670 MB) downloads over Wi-Fi, and the
+old one is deleted once the new one is in and checked. If you turned off the Network permission,
+turn it back on for the update.
 
 **The Hindi model comes from Longhand's release too, unmodified.** sherpa-onnx publishes its int8
 conversion of Nemotron 3.5 ASR Streaming only inside one archive, so Longhand hosts the encoder,
@@ -331,7 +333,9 @@ adb shell rm -r /data/local/tmp/models
 ```
 
 The local `models/` directory mirrors the layout in `engine/Models.kt`:
-- `parakeet/{encoder,decoder,joiner}.int8.onnx` and `parakeet/tokens.txt` (English), or
+- `parakeet/encoder.repaired.int8.onnx` (the `models-1` release's
+  `parakeet-tdt-0.6b-v2-encoder.int8.onnx` under that name, or rebuilt as below),
+  `parakeet/{decoder,joiner}.int8.onnx` and `parakeet/tokens.txt` (English), or
   `parakeet-v3/encoder.repaired.int8.onnx` (the `models-1` release's
   `parakeet-tdt-0.6b-v3-encoder.int8.onnx` under that name, or rebuilt as below),
   `parakeet-v3/{decoder,joiner}.int8.onnx`
@@ -345,24 +349,27 @@ The local `models/` directory mirrors the layout in `engine/Models.kt`:
 
 Release builds can't use `run-as`; they download the models in the app.
 
-### Rebuilding the European languages encoder
+### Rebuilding the English and European languages encoders
 
-The Parakeet v3 encoder the app downloads (`parakeet-tdt-0.6b-v3-encoder.int8.onnx` in the
-[models-1](https://github.com/christiantwu/longhand/releases/tag/models-1) release) is made by
-`tools/requantize_parakeet_v3.py`. It downloads sherpa-onnx's full-precision conversion (2.5 GB,
-pinned to a commit and hash-checked), quantizes it with ONNX Runtime, and prints the result's size
-and SHA-256. Quantizing needs about 8 GB of RAM.
+The Parakeet encoders the app downloads (`parakeet-tdt-0.6b-v2-encoder.int8.onnx` for English and
+`parakeet-tdt-0.6b-v3-encoder.int8.onnx` for the European languages, in the
+[models-1](https://github.com/christiantwu/longhand/releases/tag/models-1) release) are made by
+`tools/requantize_parakeet.py`, given `v2` or `v3`. It downloads sherpa-onnx's full-precision
+conversion of that model (2.5 GB, pinned to a commit and hash-checked), quantizes it with ONNX
+Runtime, and prints the result's size and SHA-256. Quantizing needs about 8 GB of RAM.
 
 ```sh
 pip install onnxruntime==1.30.0 onnx==1.23.1
-tools/requantize_parakeet_v3.py   # → build/requantize-parakeet-v3/parakeet-tdt-0.6b-v3-encoder.int8.onnx
+tools/requantize_parakeet.py v2   # → build/requantize-parakeet-v2/parakeet-tdt-0.6b-v2-encoder.int8.onnx
+cp build/requantize-parakeet-v2/parakeet-tdt-0.6b-v2-encoder.int8.onnx models/parakeet/encoder.repaired.int8.onnx
+tools/requantize_parakeet.py v3   # → build/requantize-parakeet-v3/parakeet-tdt-0.6b-v3-encoder.int8.onnx
 cp build/requantize-parakeet-v3/parakeet-tdt-0.6b-v3-encoder.int8.onnx models/parakeet-v3/encoder.repaired.int8.onnx
 ```
 
 With those versions the output is bit-identical to the hosted file, and the script says whether it
-matches the size and hash in `engine/Models.kt`. The model is NVIDIA's, under CC-BY-4.0, so the
-notes of the release that hosts the file must credit NVIDIA, link the licence and the original model,
-and say the encoder was re-quantized by Longhand.
+matches the size and hash in `engine/Models.kt`. The models are NVIDIA's, under CC-BY-4.0, so the
+notes of the release that hosts the files must credit NVIDIA, link the licence and the original
+models, and say the encoders were re-quantized by Longhand.
 
 ### Hosting the Hindi model
 

@@ -43,6 +43,9 @@ class ModelDownloadWorker(context: Context, params: WorkerParameters) : Coroutin
         // Only the chosen language's speech set is ever wanted. A download queued for another (an update
         // check racing a language change, say) would fetch hundreds of MB to be deleted again.
         if (set != Models.Set.SUMMARY && Settings(applicationContext).current().language.set != set) return Result.success()
+        // A partial download of a file this set has since replaced is never finished; free its space before the
+        // storage check counts it (the folder check that also deletes it waits for setup to finish).
+        Models.recognizerLock.withLock { Models.deleteObsolete(applicationContext, set) }
         update = Models.needsUpdate(applicationContext, set)
         var done = set.files.sumOf { f ->
             val file = Models.file(applicationContext, f.path)
@@ -110,15 +113,7 @@ class ModelDownloadWorker(context: Context, params: WorkerParameters) : Coroutin
         val p = if (missing > 0) (bytes - start).toFloat() / missing else 1f
         setProgress(workDataOf(PROGRESS to p))
         val n = Work.progressNotification(
-            applicationContext,
-            when (set) {
-                Models.Set.SUMMARY -> "Downloading the summary model"
-                Models.Set.MULTILINGUAL -> if (update) "Updating the European languages model" else "Downloading the European languages model"
-                Models.Set.CJK -> "Downloading the Chinese, Japanese and Korean model"
-                Models.Set.HINDI -> "Downloading the Hindi model"
-                else -> "Downloading transcription models"
-            },
-            "${(bytes - start) / 1_000_000} / ${missing / 1_000_000} MB", p,
+            applicationContext, title(set, update), "${(bytes - start) / 1_000_000} / ${missing / 1_000_000} MB", p,
         )
         runCatching { setForeground(Work.foregroundInfo(Work.NOTIF_DOWNLOAD, n, longProcessing = false)) }
     }
@@ -181,5 +176,14 @@ class ModelDownloadWorker(context: Context, params: WorkerParameters) : Coroutin
         const val ERROR = "error"
         /** Room left free after a download, for transcripts and everything else on the phone. */
         private const val SPACE_MARGIN = 300_000_000L
+
+        /** The download notification's title; [update] when the set already works and an improved file replaces an earlier one. */
+        fun title(set: Models.Set, update: Boolean): String = when (set) {
+            Models.Set.SUMMARY -> "Downloading the summary model"
+            Models.Set.SPEECH -> if (update) "Updating the English model" else "Downloading transcription models"
+            Models.Set.MULTILINGUAL -> if (update) "Updating the European languages model" else "Downloading the European languages model"
+            Models.Set.CJK -> "Downloading the Chinese, Japanese and Korean model"
+            Models.Set.HINDI -> "Downloading the Hindi model"
+        }
     }
 }
