@@ -5,6 +5,10 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
@@ -41,7 +45,13 @@ private fun AppNav() {
     val nav = rememberNavController()
     // Decided once: finishing setup navigates explicitly rather than swapping the graph.
     val start = remember { if (loaded.setupDone) "list" else "setup" }
-    NavHost(nav, startDestination = start) {
+    NavHost(
+        nav, startDestination = start,
+        // A back swipe crossfades the screens like every other move. Navigation's default for it shrinks the screen
+        // being left toward 70% without fading it, then drops it at that size when the swipe ends.
+        predictivePopEnterTransition = { _ -> fadeIn(spring(stiffness = Spring.StiffnessMediumLow)) },
+        predictivePopExitTransition = { _ -> fadeOut(spring(stiffness = Spring.StiffnessMediumLow)) },
+    ) {
         composable("setup") {
             SetupScreen(vm, onDone = {
                 nav.navigate("list") { popUpTo("setup") { inclusive = true } }
