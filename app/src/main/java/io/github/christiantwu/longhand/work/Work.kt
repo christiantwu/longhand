@@ -155,11 +155,15 @@ object Work {
      * app opens. An improved file that replaces an earlier one downloads like any model, over Wi-Fi, while the
      * earlier one keeps transcribing, and what earlier files leave behind is deleted. A failed update keeps its
      * error and Retry in Settings instead of starting over at every check; WorkManager forgets the failure
-     * after a day, and the next check tries again.
+     * after a day, and the next check tries again. Other languages kept on the phone update once chosen again.
      */
     suspend fun updateModels(context: Context) {
-        Models.recognizerLock.withLock { Models.speechSets.forEach { Models.deleteObsolete(context, it) } }
         val chosen = Settings(context).current().language.set
+        // Also what a language switch cut short before it could clean up, e.g. half a download of the language left.
+        Models.recognizerLock.withLock {
+            Models.speechSets.forEach { Models.deleteObsolete(context, it) }
+            Models.deleteAbandoned(context, chosen)
+        }
         if (!Models.needsUpdate(context, chosen)) return
         val failed = WorkManager.getInstance(context).getWorkInfosForUniqueWork(downloadName(chosen)).get()
             .any { it.state == WorkInfo.State.FAILED }

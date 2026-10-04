@@ -58,7 +58,8 @@ and no server, and nothing is uploaded.
   folder, so other Android 12+ phones that save call recordings to a folder may work too,
   but that's untested.
 - A 64-bit ARM phone.
-- Storage for the models: 0.3–0.75 GB for transcription, plus 2.6 GB for summaries.
+- Storage for the models: 0.3–0.75 GB for transcription, 0.24–0.69 GB more for each further
+  language you keep, plus 2.6 GB for summaries.
 - For the best accuracy, record calls as WAV: in the Phone app's settings, turn on
   "Use call recording V2 (experimental)", then choose WAV as the recording format.
   Compressed recordings are transcribed noticeably less accurately.
@@ -84,8 +85,9 @@ summaries can contain mistakes, so check anything important against the recordin
   Swedish and Ukrainian. Or SenseVoice Small (int8) for Chinese (Mandarin and Cantonese), Japanese,
   Korean and English, also detected per call. Or NVIDIA Nemotron 3.5 ASR Streaming 0.6B (int8,
   1120 ms chunks) for Hindi and English, detected for each turn, including calls that mix them;
-  English words in Hindi sentences are written in Devanagari. Only the chosen one is kept; while a
-  new choice downloads, the old one keeps transcribing.
+  English words in Hindi sentences are written in Devanagari. Each one you download stays on the
+  phone until you remove it, so switching back is instant; while a new choice downloads, the one
+  used before keeps transcribing.
 - **Who spoke when:** pyannote segmentation 3.0 + NeMo TitaNet speaker embeddings
 - **Pause detection:** Silero VAD
 - **Speech runtime:** [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) 1.13.8 (ONNX Runtime, CPU)
@@ -96,8 +98,10 @@ The models are downloaded from the setup screen: the speech models for the chose
 (~720 MB for English, ~730 MB for the European languages, ~290 MB for Chinese, Japanese and
 Korean, or ~730 MB for Hindi, the speaker models included; required) and the summary model
 (~2.6 GB, optional). Choosing another language later in Settings downloads its recognizer
-(240–690 MB) and then deletes the old one. Downloads wait for Wi-Fi (an unmetered connection)
-unless you choose to go ahead on mobile data or a metered network. Summaries follow an English
+(240–690 MB) while the one used before keeps transcribing, and both stay: switching to a language
+already downloaded is instant, and **Remove** next to it in Settings frees its space. A download
+left unfinished when you choose another language is deleted. Downloads wait for Wi-Fi (an
+unmetered connection) unless you choose to go ahead on mobile data or a metered network. Summaries follow an English
 prompt, so a call in another language may still get its summary in English. After that you can
 turn off the app's Network permission in GrapheneOS.
 
@@ -114,8 +118,9 @@ For English, on recorded phone conversations coded like the default recordings, 
 to 6.9%, about 11% fewer errors, with smaller gains elsewhere. Both are also about 30% faster in
 desktop tests. Phones that downloaded English or the European languages with an earlier version
 keep transcribing with the old encoder while the new one (~670 MB) downloads over Wi-Fi, and the
-old one is deleted once the new one is in and checked. If you turned off the Network permission,
-turn it back on for the update.
+old one is deleted once the new one is in and checked. A language kept on the phone but not chosen
+gets its new encoder when you choose it again. If you turned off the Network permission, turn it
+back on for the update.
 
 **The Hindi model comes from Longhand's release too, unmodified.** sherpa-onnx publishes its int8
 conversion of Nemotron 3.5 ASR Streaming only inside one archive, so Longhand hosts the encoder,
@@ -146,6 +151,9 @@ tests of the model, recognition took about 1.8 times as long as the European lan
    about 15 minutes. When an update changes how speakers are found, every earlier transcript is
    redone once on the charger, after new calls. The old transcript stays until its replacement
    is ready, and redos don't send a notification.
+   Each recording is transcribed in the language chosen in Settings, or, while that one downloads,
+   in the one used before (`Models.recognizer`), so a switch to a language already on the phone
+   takes effect from the next recording.
    It runs as a foreground job with a progress notification, in two phases so the two model
    sets are never in memory together:
    1. **Transcribe** each pending recording (`TranscriptionEngine`):

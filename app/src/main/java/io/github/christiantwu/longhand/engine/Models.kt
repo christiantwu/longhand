@@ -232,13 +232,55 @@ object Models {
     fun speechReady(context: Context): Boolean = speechSets.any { isInstalled(context, it) }
 
     /**
-     * The speech set to transcribe with: the [chosen] one once it's downloaded, until then whichever
-     * is installed (a new language keeps the old one working while it downloads); null if none is.
+     * The speech set to transcribe with: the [chosen] one once it's usable. Until then the [previous] one, the
+     * language used before the choice changed, carries on while the new one downloads, or failing that any usable
+     * one; null if none is.
      */
-    fun recognizer(chosen: Set, sizes: Sizes): Set? =
-        chosen.takeIf { isInstalled(it, sizes) } ?: speechSets.firstOrNull { isInstalled(it, sizes) }
+    fun recognizer(chosen: Set, previous: Set?, sizes: Sizes): Set? =
+        (listOfNotNull(chosen, previous) + speechSets).firstOrNull { isInstalled(it, sizes) }
 
-    fun recognizer(context: Context, chosen: Set): Set? = recognizer(chosen, sizes(context))
+    fun recognizer(context: Context, chosen: Set, previous: Set?): Set? = recognizer(chosen, previous, sizes(context))
+
+    /**
+     * The language to remember as used before, on a switch from [leaving] to [chosen]: [leaving] if it was usable,
+     * since it was then the one transcribing; otherwise the one [remembered] so far, which still is.
+     */
+    fun previousAfter(leaving: Language, chosen: Language, remembered: Language?, sizes: Sizes): Language? =
+        leaving.takeIf { it != chosen && isInstalled(it.set, sizes) } ?: remembered
+
+    fun previousAfter(context: Context, leaving: Language, chosen: Language, remembered: Language?): Language? =
+        previousAfter(leaving, chosen, remembered, sizes(context))
+
+    /** The speech sets that can be removed: usable, but neither [chosen] nor transcribing in its place. */
+    fun removable(chosen: Set, previous: Set?, sizes: Sizes): List<Set> {
+        val inUse = recognizer(chosen, previous, sizes)
+        return speechSets.filter { it != chosen && it != inUse && isInstalled(it, sizes) }
+    }
+
+    fun removable(context: Context, chosen: Set, previous: Set?): List<Set> = removable(chosen, previous, sizes(context))
+
+    /** What [set]'s own files take on disk, the speaker models it shares left out. */
+    fun ownBytes(set: Set, sizes: Sizes): Long = recognizerPaths(listOf(set)).sumOf { sizes.of(it) }
+
+    fun ownBytes(context: Context, set: Set): Long = ownBytes(set, sizes(context))
+
+    /**
+     * Files of languages no longer [chosen] that nothing can use: everything a first download left unfinished, and
+     * the partial files of a usable language (a cancelled update, which starts again when it's chosen). Each file a
+     * usable language needs stays, and so do the speaker models every language shares.
+     */
+    fun abandonedPaths(chosen: Set, sizes: Sizes): List<String> {
+        val needed = speechSets.filter { isInstalled(it, sizes) }.flatMap { s -> s.files.map { pathInUse(it, sizes) } }.toSet()
+        return (speechSets - chosen).flatMap { set ->
+            val usable = isInstalled(set, sizes)
+            recognizerPaths(listOf(set)).flatMap { listOfNotNull(it.takeUnless { usable }, "$it.part") }
+        }.filter { sizes.of(it) > 0 && it !in needed }
+    }
+
+    /** Deletes [abandonedPaths]. Call it holding [recognizerLock]. */
+    fun deleteAbandoned(context: Context, chosen: Set) {
+        abandonedPaths(chosen, sizes(context)).forEach { file(context, it).delete() }
+    }
 
     /**
      * Held while a recognizer is chosen and loaded, and while one is deleted, so a model can't
@@ -256,8 +298,8 @@ object Models {
     }
 
     /**
-     * Deletes [sets]' recognizers, and any partial downloads of them, freeing 240–690 MB each. The
-     * speaker models every speech set shares stay. Call it holding [recognizerLock].
+     * Deletes [sets]' recognizers, and any partial downloads of them, freeing 240–690 MB each: a language the
+     * user removes. The speaker models every speech set shares stay. Call it holding [recognizerLock].
      */
     fun removeRecognizers(context: Context, sets: List<Set>) {
         for (path in recognizerPaths(sets)) {

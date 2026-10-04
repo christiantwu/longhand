@@ -40,8 +40,8 @@ class ModelDownloadWorker(context: Context, params: WorkerParameters) : Coroutin
     private var start = 0L
 
     private suspend fun downloadSet(): Result {
-        // Only the chosen language's speech set is ever wanted. A download queued for another (an update
-        // check racing a language change, say) would fetch hundreds of MB to be deleted again.
+        // Only the chosen language's speech set is ever downloaded. A download queued for another (an update
+        // check racing a language change, say) would fetch hundreds of MB nobody asked for.
         if (set != Models.Set.SUMMARY && Settings(applicationContext).current().language.set != set) return Result.success()
         // A partial download of a file this set has since replaced is never finished; free its space before the
         // storage check counts it (the folder check that also deletes it waits for setup to finish).
@@ -67,7 +67,9 @@ class ModelDownloadWorker(context: Context, params: WorkerParameters) : Coroutin
                 val needed = f.sizeBytes - part.length().coerceAtMost(f.sizeBytes)
                 val free = Models.dir(applicationContext).usableSpace
                 if (free < needed + SPACE_MARGIN) {
-                    return Result.failure(workDataOf(ERROR to "Not enough storage: ${(needed + SPACE_MARGIN - free) / 1_000_000 + 1} MB more needed"))
+                    val s = Settings(applicationContext).current()
+                    val removable = Models.removable(applicationContext, s.language.set, s.previousLanguage?.set).isNotEmpty()
+                    return Result.failure(workDataOf(ERROR to notEnoughStorage(needed + SPACE_MARGIN - free, removable)))
                 }
                 val base = done
                 // A complete .part (the app stopped before renaming it) only needs checking.
@@ -86,13 +88,11 @@ class ModelDownloadWorker(context: Context, params: WorkerParameters) : Coroutin
                 AppDatabase.get(applicationContext).recordings().queueMissingSummaries()
                 Work.scanNow(applicationContext)
             } else {
-                val chosen = Settings(applicationContext).current().language.set == set
                 Models.recognizerLock.withLock {
                     // Every file is in place and verified, so an earlier file one of them replaces has done its job.
                     Models.deleteObsolete(applicationContext, set)
-                    // The language chosen in Settings is now in place: the recognizer that worked while this
-                    // one downloaded has done its job, and goes to free the space.
-                    if (chosen) Models.removeRecognizers(applicationContext, Models.speechSets - set)
+                    // The other usable languages stay, for switching back; only what nothing can use goes.
+                    Models.deleteAbandoned(applicationContext, Settings(applicationContext).current().language.set)
                 }
             }
             Result.success()
@@ -176,6 +176,10 @@ class ModelDownloadWorker(context: Context, params: WorkerParameters) : Coroutin
         const val ERROR = "error"
         /** Room left free after a download, for transcripts and everything else on the phone. */
         private const val SPACE_MARGIN = 300_000_000L
+
+        /** Why a download can't start: [bytes] more are needed. With a [removable] language, says that could make room. */
+        fun notEnoughStorage(bytes: Long, removable: Boolean): String =
+            "Not enough storage: ${bytes / 1_000_000 + 1} MB more needed" + if (removable) ". Remove a language you don't use to make room." else ""
 
         /** The download notification's title; [update] when the set already works and an improved file replaces an earlier one. */
         fun title(set: Models.Set, update: Boolean): String = when (set) {

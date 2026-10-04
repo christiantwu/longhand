@@ -37,6 +37,7 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -51,6 +52,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.AnnotatedString
@@ -339,7 +341,8 @@ const val EUROPEAN_LANGUAGES = "Bulgarian, Croatian, Czech, Danish, Dutch, Engli
 /**
  * The transcription language as a group of radio rows: English only, 25 European languages,
  * Chinese, Japanese and Korean, or Hindi, the last three detected per call. The chosen one shows its
- * download; until it's in, the installed one keeps transcribing.
+ * download; until it's in, the language used before keeps transcribing. Other downloaded languages
+ * stay, each with Remove.
  */
 @Composable
 fun LanguageChoice(language: Models.Language, vm: AppViewModel, modifier: Modifier = Modifier) {
@@ -350,7 +353,7 @@ fun LanguageChoice(language: Models.Language, vm: AppViewModel, modifier: Modifi
         Models.Language.CJK to vm.cjkModels.collectAsStateWithLifecycle().value,
         Models.Language.HINDI to vm.hindiModels.collectAsStateWithLifecycle().value,
     )
-    val chosenReady = states.getValue(language).installed
+    val inUse by vm.speechInUse.collectAsStateWithLifecycle()
     val options = Models.Language.entries
     // A phone set to a language the chosen model doesn't transcribe: most calls are probably in it.
     val phone = LocalConfiguration.current.locales[0]
@@ -377,12 +380,14 @@ fun LanguageChoice(language: Models.Language, vm: AppViewModel, modifier: Modifi
                     "Hindi and English, detected for each call, including calls that mix them. " +
                     "English words in Hindi sentences are written in Devanagari."
             }
+            val transcribing = set == inUse
             val detail = when {
                 selected && state.installed -> about
                 selected && state.downloading -> state.downloadText
                 selected && state.error != null -> "Download failed: ${state.error}"
-                !selected && state.installed && !chosenReady -> "In use until the chosen language has downloaded."
-                else -> "$about About ${Models.missingBytes(context, set) / 1_000_000} MB, downloaded over Wi-Fi."
+                !selected && transcribing -> "In use until the chosen language has downloaded."
+                !selected && state.installed -> "$about Downloaded, ${Models.ownBytes(context, set) / 1_000_000}\u00A0MB."
+                else -> "$about About ${Models.missingBytes(context, set) / 1_000_000}\u00A0MB, downloaded over Wi-Fi."
             }
             GroupRow(
                 groupShape(i, options.size), minHeight = 72.dp, verticalAlignment = Alignment.Top,
@@ -398,6 +403,10 @@ fun LanguageChoice(language: Models.Language, vm: AppViewModel, modifier: Modifi
                     }
                     // Pull the action back by its own padding so its text lines up with the text above.
                     if (selected && (!state.installed || state.update)) Row(Modifier.offset(x = (-12).dp)) { ModelAction(state, set, vm) }
+                }
+                if (!selected && state.installed && !transcribing) {
+                    OutlinedPillButton("Remove", { vm.removeLanguage(option) },
+                        Modifier.semantics { contentDescription = "Remove ${languageName(option)}" })
                 }
             }
         }

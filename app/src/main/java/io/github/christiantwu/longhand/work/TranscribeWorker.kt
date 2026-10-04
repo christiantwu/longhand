@@ -138,11 +138,12 @@ class TranscribeWorker(context: Context, params: WorkerParameters) : CoroutineWo
                         !(summariesWaiting() && dao.requestedCount() > 0) -> dao.nextRedo()
                     else -> null
                 } ?: break
-                // Chosen afresh for every recording: a language, or an improved model file, that finished
-                // downloading meanwhile takes over at once, instead of the old one carrying on through a long backlog.
-                val chosen = Settings(applicationContext).current().language.set
+                // Chosen afresh for every recording: a language chosen or finished downloading meanwhile, or an improved
+                // model file, takes over at once, instead of the old one carrying on through a long backlog.
+                val settings = Settings(applicationContext).current()
                 val loaded = Models.recognizerLock.withLock {
-                    val speech = Models.recognizer(applicationContext, chosen) ?: return@withLock false
+                    val speech = Models.recognizer(applicationContext, settings.language.set, settings.previousLanguage?.set)
+                        ?: return@withLock false
                     val files = Models.filesInUse(applicationContext, speech)
                     if (engine == null || files != engineFiles) {
                         engine?.close() // never two engines in memory

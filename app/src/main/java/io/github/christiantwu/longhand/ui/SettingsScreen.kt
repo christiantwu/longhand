@@ -216,7 +216,8 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit, onCorrections: () -> Un
                     Models.Language.HINDI -> "Nemotron 3.5 ASR Streaming 0.6B"
                     else -> "Parakeet TDT 0.6B"
                 }
-                Text("Calls are transcribed on the phone, by $model. You can turn off this app's Network permission " +
+                Text("Calls are transcribed on the phone, by $model. Downloaded languages stay on the phone, so switching " +
+                    "back is instant; remove one to free space. You can turn off this app's Network permission " +
                     "once the models you want are downloaded.",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 16.dp))

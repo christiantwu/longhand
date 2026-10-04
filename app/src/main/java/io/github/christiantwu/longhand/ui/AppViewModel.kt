@@ -181,10 +181,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val hindiModels = modelState(Models.Set.HINDI)
     val summaryModel = modelState(Models.Set.SUMMARY)
 
+    private val speechStates = listOf(speechModels, multilingualModels, cjkModels, hindiModels)
+
     /** Calls can be transcribed: some language's models are in place. */
-    val speechReady: StateFlow<Boolean> = combine(speechModels, multilingualModels, cjkModels, hindiModels) { sets ->
-        sets.any { it.installed }
-    }.stateIn(viewModelScope, SharingStarted.Eagerly, Models.speechReady(app))
+    val speechReady: StateFlow<Boolean> = combine(speechStates) { sets -> sets.any { it.installed } }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, Models.speechReady(app))
+
+    /** The speech set calls are transcribed with now, picked as TranscribeWorker picks it; null while none is usable. */
+    val speechInUse: StateFlow<Models.Set?> = combine(settings, combine(speechStates) { it.toList() }) { s, _ ->
+        s?.let { Models.recognizer(app, it.language.set, it.previousLanguage?.set) }
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 
     val deviceState = MutableStateFlow(DeviceState())
 
@@ -244,25 +250,34 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         Work.downloadModels(getApplication(), set, network)
 
     /**
-     * A language not downloaded yet is fetched (over Wi-Fi, like the others) while the installed one
-     * keeps working; once it's in, the old one is deleted. A language that is still installed takes
-     * over at once, and fetches any improved file it lacks. Either way, any download of a language no
-     * longer chosen stops and is deleted.
+     * A language already on the phone takes over at once, and fetches any improved file it lacks. One not
+     * downloaded yet is fetched (over Wi-Fi, like the others) while the language used until now keeps
+     * transcribing. Every usable language stays until it's removed; a download of a language no longer
+     * chosen stops, and what it leaves that nothing can use is deleted.
      */
     fun setLanguage(language: Models.Language) = viewModelScope.launch(Dispatchers.IO) { languageLock.withLock {
-        settingsStore.setLanguage(language)
         val app = getApplication<Application>()
+        val s = settingsStore.current()
+        settingsStore.setLanguage(language, Models.previousAfter(app, s.language, language, s.previousLanguage))
         val chosen = language.set
-        // Keep an installed language only to transcribe with until the chosen one arrives; it needs no update for that.
-        val unneeded = (Models.speechSets - chosen)
-            .filter { Models.isInstalled(app, chosen) || !Models.isInstalled(app, it) }
         for (set in Models.speechSets - chosen) workManager.cancelUniqueWork(Work.downloadName(set)).result.get()
-        Models.recognizerLock.withLock { Models.removeRecognizers(app, unneeded) }
+        Models.recognizerLock.withLock { Models.deleteAbandoned(app, chosen) }
         if (Models.missingBytes(app, chosen) > 0) Work.downloadModels(app, chosen)
         refreshTick.value++
     } }
 
-    /** Quick taps on one language after another are handled in order, so the last one wins. */
+    /** Deletes a downloaded language that is neither chosen nor transcribing in its place. The speaker models stay. */
+    fun removeLanguage(language: Models.Language) = viewModelScope.launch(Dispatchers.IO) { languageLock.withLock {
+        val app = getApplication<Application>()
+        val s = settingsStore.current()
+        // A tap handled after a change of language may no longer be one to act on.
+        if (language.set !in Models.removable(app, s.language.set, s.previousLanguage?.set)) return@withLock
+        workManager.cancelUniqueWork(Work.downloadName(language.set)).result.get()
+        Models.recognizerLock.withLock { Models.removeRecognizers(app, listOf(language.set)) }
+        refreshTick.value++
+    } }
+
+    /** Quick taps on one language after another (or on Remove) are handled in order, so the last one wins. */
     private val languageLock = Mutex()
 
     /** Setup's starting choice, from the phone's language: saved without downloading anything, like the English default. */

@@ -21,8 +21,10 @@ data class AppSettings(
     val skipBefore: Long = 0L,
     /** The calls-list reminder about the Phone permission was dismissed. */
     val phoneNoticeHidden: Boolean = false,
-    /** The language calls are transcribed in, which decides the speech model kept on the phone. */
+    /** The language calls are transcribed in, which decides the speech model used. */
     val language: Models.Language = Models.Language.ENGLISH,
+    /** The language used before [language] was chosen, if it was usable: it transcribes until [language] has downloaded. */
+    val previousLanguage: Models.Language? = null,
     /** A language was ever chosen (or preselected at setup); until then [language] is only the default. */
     val languageChosen: Boolean = false,
     /** Suggest the names of people the user has named when their voice is heard in another call. */
@@ -41,6 +43,7 @@ class Settings(private val context: Context) {
         val skipBefore = longPreferencesKey("skip_before")
         val phoneNoticeHidden = booleanPreferencesKey("phone_notice_hidden")
         val language = stringPreferencesKey("language")
+        val previousLanguage = stringPreferencesKey("previous_language")
         /** 0.6.0, before the third language: true meant the 25 European languages. */
         val multilingual = booleanPreferencesKey("multilingual")
         val recogniseVoices = booleanPreferencesKey("recognise_voices")
@@ -60,7 +63,13 @@ class Settings(private val context: Context) {
     suspend fun setSetupDone(v: Boolean) = set(Keys.setupDone, v)
     suspend fun setSkipBefore(v: Long) = set(Keys.skipBefore, v)
     suspend fun setPhoneNoticeHidden(v: Boolean) = set(Keys.phoneNoticeHidden, v)
-    suspend fun setLanguage(v: Models.Language) = set(Keys.language, v.name)
+    /** Chooses [v], remembering [previous], when given, to transcribe with until [v] has downloaded. */
+    suspend fun setLanguage(v: Models.Language, previous: Models.Language? = null) {
+        context.dataStore.edit {
+            it[Keys.language] = v.name
+            if (previous != null) it[Keys.previousLanguage] = previous.name
+        }
+    }
     suspend fun setRecogniseVoices(v: Boolean) = set(Keys.recogniseVoices, v)
     suspend fun setEditTipSeen(v: Boolean) = set(Keys.editTipSeen, v)
 
@@ -74,6 +83,7 @@ class Settings(private val context: Context) {
             language = Models.Language.entries.firstOrNull { it.name == p[Keys.language] }
                 ?: if (p[Keys.multilingual] == true) Models.Language.EUROPEAN else Models.Language.ENGLISH,
             languageChosen = p[Keys.language] != null || p[Keys.multilingual] != null,
+            previousLanguage = Models.Language.entries.firstOrNull { it.name == p[Keys.previousLanguage] },
             recogniseVoices = p[Keys.recogniseVoices] ?: false,
             editTipSeen = p[Keys.editTipSeen] ?: false,
         )

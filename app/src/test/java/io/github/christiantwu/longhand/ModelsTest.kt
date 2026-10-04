@@ -100,13 +100,16 @@ class ModelsTest {
     @Test fun hindiTakesOverFromTheInstalledLanguage() {
         val disk = Disk().add(SPEECH)
         // English keeps transcribing while Hindi downloads, and only Hindi's own files are still to come.
-        assertEquals(SPEECH, Models.recognizer(HINDI, disk))
+        assertEquals(SPEECH, Models.recognizer(HINDI, SPEECH, disk))
         assertFalse(Models.isInstalled(HINDI, disk))
         assertEquals(HINDI.files.filter { it.path.startsWith("nemotron/") }.sumOf { it.sizeBytes }, Models.missingBytes(HINDI, disk))
         disk.add(HINDI)
-        assertEquals(HINDI, Models.recognizer(HINDI, disk))
+        assertEquals(HINDI, Models.recognizer(HINDI, SPEECH, disk))
         assertFalse(Models.needsUpdate(HINDI, disk))
-        // Then the other recognizers go, and the speaker models stay.
+        // English stays, for switching back, until it's removed.
+        assertEquals(emptyList<String>(), Models.abandonedPaths(HINDI, disk))
+        assertEquals(SPEECH, Models.recognizer(SPEECH, HINDI, disk))
+        // Removing a language takes only its recognizer; the speaker models stay.
         val others = Models.recognizerPaths(Models.speechSets - HINDI)
         assertTrue("parakeet/encoder.repaired.int8.onnx" in others)
         assertTrue("parakeet/encoder.int8.onnx" in others)
@@ -122,7 +125,7 @@ class ModelsTest {
             assertFalse(Models.needsUpdate(set, disk))
             assertEquals(set.totalBytes, Models.missingBytes(set, disk))
             assertEquals(encoder.path, Models.pathInUse(encoder, disk))
-            assertNull(Models.recognizer(set, disk))
+            assertNull(Models.recognizer(set, null, disk))
         }
     }
 
@@ -132,8 +135,8 @@ class ModelsTest {
             val disk = earlier(set)
             assertTrue(Models.isInstalled(set, disk))
             assertTrue(Models.needsUpdate(set, disk))
-            assertEquals(set, Models.recognizer(set, disk))
-            assertEquals(set, Models.recognizer(CJK, disk)) // a new language waits on it too
+            assertEquals(set, Models.recognizer(set, null, disk))
+            assertEquals(set, Models.recognizer(CJK, set, disk)) // a new language waits on it too
             assertEquals(encoder.replaces?.path, Models.pathInUse(encoder, disk))
             assertEquals(set.part("decoder").path, Models.pathInUse(set.part("decoder"), disk))
             // Only the new encoder is still to download.
@@ -144,8 +147,8 @@ class ModelsTest {
 
     @Test fun anEarlierEnglishInstallKeepsTranscribingWithTheOldEncoder() {
         val disk = earlier(SPEECH)
-        assertEquals(SPEECH, Models.recognizer(SPEECH, disk))
-        assertEquals(SPEECH, Models.recognizer(MULTILINGUAL, disk)) // and while the European languages download
+        assertEquals(SPEECH, Models.recognizer(SPEECH, null, disk))
+        assertEquals(SPEECH, Models.recognizer(MULTILINGUAL, SPEECH, disk)) // and while the European languages download
         assertEquals("parakeet/encoder.int8.onnx", Models.pathInUse(englishEncoder, disk))
         assertEquals(englishEncoder.sizeBytes, Models.missingBytes(SPEECH, disk))
         // The European languages need only their recognizer: the old English encoder is no part of them.
@@ -168,8 +171,8 @@ class ModelsTest {
             assertTrue(Models.needsUpdate(set, disk))
             assertEquals(set.part("encoder").replaces?.path, Models.pathInUse(set.part("encoder"), disk))
         }
-        assertEquals(MULTILINGUAL, Models.recognizer(MULTILINGUAL, disk))
-        assertEquals(SPEECH, Models.recognizer(SPEECH, disk))
+        assertEquals(MULTILINGUAL, Models.recognizer(MULTILINGUAL, SPEECH, disk))
+        assertEquals(SPEECH, Models.recognizer(SPEECH, MULTILINGUAL, disk))
     }
 
     @Test fun aPartialDownloadOfTheNewEncoderChangesNothing() {
@@ -267,6 +270,107 @@ class ModelsTest {
             "parakeet/joiner.int8.onnx", "parakeet/tokens.txt"), paths)
         // The European languages' files are another folder's.
         assertTrue(Models.recognizerPaths(listOf(MULTILINGUAL)).none { it.startsWith("parakeet/") })
+    }
+
+    @Test fun theLanguageUsedBeforeTranscribesUntilTheChosenOneArrives() {
+        val disk = Disk().add(SPEECH, MULTILINGUAL)
+        // Hindi chosen after the European languages: they carry on, though English comes first.
+        assertEquals(MULTILINGUAL, Models.recognizer(HINDI, MULTILINGUAL, disk))
+        assertEquals(SPEECH, Models.recognizer(HINDI, SPEECH, disk))
+        // None remembered (chosen before this was), or one since removed: any usable language.
+        assertEquals(SPEECH, Models.recognizer(HINDI, null, disk))
+        assertEquals(SPEECH, Models.recognizer(HINDI, CJK, disk))
+        // A language already downloaded takes over at once.
+        assertEquals(MULTILINGUAL, Models.recognizer(MULTILINGUAL, SPEECH, disk))
+        disk.add(HINDI)
+        assertEquals(HINDI, Models.recognizer(HINDI, MULTILINGUAL, disk))
+    }
+
+    @Test fun aSecondSwitchDuringADownloadKeepsTheLanguageThatTranscribes() {
+        val disk = Disk().add(SPEECH, MULTILINGUAL)
+        // The European languages chosen; Hindi picked, so they carry on while it downloads.
+        val first = Models.previousAfter(Models.Language.EUROPEAN, Models.Language.HINDI, null, disk)
+        assertEquals(Models.Language.EUROPEAN, first)
+        // Chinese, Japanese and Korean picked before Hindi arrives: Hindi never transcribed, so the European
+        // languages still do, not English, which comes first.
+        val second = Models.previousAfter(Models.Language.HINDI, Models.Language.CJK, first, disk)
+        assertEquals(Models.Language.EUROPEAN, second)
+        assertEquals(MULTILINGUAL, Models.recognizer(CJK, second?.set, disk))
+        // Back to English, already downloaded: it takes over, and nothing else needs remembering.
+        assertEquals(SPEECH, Models.recognizer(SPEECH, Models.previousAfter(Models.Language.CJK, Models.Language.ENGLISH, second, disk)?.set, disk))
+        // Leaving a usable language remembers it.
+        assertEquals(Models.Language.ENGLISH, Models.previousAfter(Models.Language.ENGLISH, Models.Language.HINDI, Models.Language.EUROPEAN, disk))
+    }
+
+    @Test fun onlyALanguageNeitherChosenNorInUseCanBeRemoved() {
+        val disk = Disk().add(SPEECH, MULTILINGUAL, CJK)
+        // Hindi downloading after the European languages, which transcribe meanwhile.
+        assertEquals(listOf(SPEECH, CJK), Models.removable(HINDI, MULTILINGUAL, disk))
+        assertEquals(listOf(SPEECH, MULTILINGUAL), Models.removable(CJK, MULTILINGUAL, disk))
+        assertEquals(emptyList<Models.Set>(), Models.removable(SPEECH, null, Disk().add(SPEECH)))
+        assertEquals(emptyList<Models.Set>(), Models.removable(HINDI, SPEECH, Disk().add(SPEECH)))
+    }
+
+    @Test fun aDownloadedLanguageCountsOnlyItsOwnFiles() {
+        val disk = Disk().add(SPEECH, MULTILINGUAL)
+        assertEquals(MULTILINGUAL.files.filter { it.path.startsWith("parakeet-v3/") }.sumOf { it.sizeBytes },
+            Models.ownBytes(MULTILINGUAL, disk))
+        assertEquals(0L, Models.ownBytes(CJK, disk))
+        // On the old encoder, that's what it takes.
+        val english = SPEECH.files.filter { it.path.startsWith("parakeet/") }.sumOf { it.sizeBytes }
+        assertEquals(english - englishEncoder.sizeBytes + englishOld.sizeBytes, Models.ownBytes(SPEECH, earlier(SPEECH)))
+    }
+
+    @Test fun anUnfinishedFirstDownloadOfALanguageNoLongerChosenGoes() {
+        // Hindi chosen while English transcribed, half downloaded, then English chosen again.
+        val hindiEncoder = HINDI.part("encoder")
+        val hindiDecoder = HINDI.part("decoder")
+        val disk = Disk().add(SPEECH).also {
+            it.files[hindiEncoder.path] = hindiEncoder.sizeBytes
+            it.files["${hindiDecoder.path}.part"] = 4_000_000
+        }
+        assertEquals(listOf(hindiEncoder.path, "${hindiDecoder.path}.part"), Models.abandonedPaths(SPEECH, disk))
+        assertEquals(listOf(hindiEncoder.path, "${hindiDecoder.path}.part"), Models.abandonedPaths(CJK, disk))
+        // While Hindi is still chosen, it's left to finish.
+        assertEquals(emptyList<String>(), Models.abandonedPaths(HINDI, disk))
+    }
+
+    @Test fun usableLanguagesStayWithTheFilesStandingIn() {
+        // English from an earlier version, still on its old encoder, and the European languages.
+        val disk = earlier(SPEECH).add(MULTILINGUAL)
+        for (chosen in Models.speechSets) assertEquals(emptyList<String>(), Models.abandonedPaths(chosen, disk))
+        // An old encoder that no longer makes its language usable goes with the rest of it.
+        disk.files.remove(SPEECH.part("decoder").path)
+        assertEquals(listOf(englishOld.path, "parakeet/joiner.int8.onnx", "parakeet/tokens.txt"), Models.abandonedPaths(MULTILINGUAL, disk))
+    }
+
+    @Test fun aCancelledUpdateOfALanguageNoLongerChosenGoes() {
+        // English's new encoder was downloading when the European languages were chosen.
+        val disk = earlier(SPEECH).add(MULTILINGUAL).also { it.files["${englishEncoder.path}.part"] = 300_000_000 }
+        assertEquals(listOf("${englishEncoder.path}.part"), Models.abandonedPaths(MULTILINGUAL, disk))
+        assertEquals(listOf("${englishEncoder.path}.part"), Models.abandonedPaths(HINDI, disk))
+        // English itself stays, on the old encoder; chosen again, it carries on with the update.
+        assertTrue(Models.isInstalled(SPEECH, disk))
+        assertEquals(emptyList<String>(), Models.abandonedPaths(SPEECH, disk))
+    }
+
+    @Test fun theSharedSpeakerModelsAreNeverAbandoned() {
+        // English's first download stopped in the speaker models, which come after its recognizer; then Hindi was chosen.
+        val speaker = setOf("segmentation.onnx", "embedding.onnx", "silero_vad.onnx")
+        val disk = Disk().add(SPEECH, except = speaker - "segmentation.onnx").also { it.files["embedding.onnx.part"] = 1_000_000 }
+        val paths = Models.abandonedPaths(HINDI, disk)
+        assertEquals(listOf(englishEncoder.path, "parakeet/decoder.int8.onnx", "parakeet/joiner.int8.onnx", "parakeet/tokens.txt"), paths)
+        assertTrue(paths.none { p -> speaker.any { p.startsWith(it) } })
+        // Nor with every language usable, or none.
+        val everything = Disk().add(*Models.speechSets.toTypedArray()).also { d -> speaker.forEach { d.files["$it.part"] = 1 } }
+        assertEquals(emptyList<String>(), Models.abandonedPaths(SPEECH, everything))
+        assertEquals(emptyList<String>(), Models.abandonedPaths(SPEECH, Disk(speaker.associateWith { 1_000L }.toMutableMap())))
+    }
+
+    @Test fun notEnoughStorageSaysWhenALanguageCouldMakeRoom() {
+        assertEquals("Not enough storage: 413 MB more needed", ModelDownloadWorker.notEnoughStorage(412_345_678, removable = false))
+        assertEquals("Not enough storage: 413 MB more needed. Remove a language you don't use to make room.",
+            ModelDownloadWorker.notEnoughStorage(412_345_678, removable = true))
     }
 
     @Test fun updateLine() {
