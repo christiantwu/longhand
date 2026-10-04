@@ -8,9 +8,12 @@ import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.Font
@@ -19,6 +22,7 @@ import androidx.compose.ui.text.font.FontVariation
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
+import androidx.core.graphics.ColorUtils
 import io.github.christiantwu.longhand.R
 
 /**
@@ -86,16 +90,43 @@ fun AppTheme(content: @Composable () -> Unit) {
 }
 
 /**
- * Colour for a speaker's name: you in the primary colour, the other person in the tertiary one, and
- * extra voices on conference calls in the secondary colour and then the plain secondary text colour.
+ * Colour for a speaker's name, each voice in its own hue at the same strength: you in the wallpaper's own hue, everyone
+ * else in hues turned well away from it ([SpeakerHues]). The wallpaper's secondary and tertiary colours sit too close to
+ * its primary to tell people apart. Tone 40 (light) or 80 (dark) keeps every name readable on the page and on the line
+ * being played.
  */
 @Composable
 fun speakerColor(speaker: Int, owner: Int?): Color {
     val c = MaterialTheme.colorScheme
-    return when {
-        speaker == owner -> c.primary
-        owner == null && speaker == 0 -> c.tertiary
-        owner == null && speaker == 1 -> c.primary
-        else -> listOf(c.tertiary, c.secondary, c.onSurfaceVariant)[(speaker - if (owner != null && speaker > owner) 1 else 0).coerceAtLeast(0) % 3]
+    val dark = c.surface.luminance() < 0.5f
+    val primaryHue = remember(c.primary) { FloatArray(3).also { ColorUtils.colorToM3HCT(c.primary.toArgb(), it) }[0] }
+    val hue = SpeakerHues.hue(primaryHue, SpeakerHues.slot(speaker, owner))
+    return remember(hue, dark) { Color(ColorUtils.M3HCTToColor(hue, SpeakerHues.CHROMA, if (dark) 80f else 40f)) }
+}
+
+/** Which hue each speaker's name gets, apart from Compose so it can be tested. */
+object SpeakerHues {
+    const val CHROMA = 48f
+
+    /** Turns from the wallpaper's hue: you, the next two a third of the way round either side, then between them. */
+    private val TURNS = floatArrayOf(0f, 120f, 240f, 60f, 180f, 300f)
+
+    /**
+     * 0 for you, then 1, 2… for the other voices in order. Without a known owner, speaker 1 takes your place, as it
+     * always has.
+     */
+    fun slot(speaker: Int, owner: Int?): Int {
+        val me = owner ?: 1
+        return when {
+            speaker == me -> 0
+            speaker < me -> speaker + 1
+            else -> speaker
+        }
+    }
+
+    /** The hue for [slot]; past six voices the others' hues come round again, never yours. */
+    fun hue(primaryHue: Float, slot: Int): Float {
+        val turn = if (slot == 0) 0f else TURNS[1 + (slot - 1) % (TURNS.size - 1)]
+        return (primaryHue + turn) % 360f
     }
 }
