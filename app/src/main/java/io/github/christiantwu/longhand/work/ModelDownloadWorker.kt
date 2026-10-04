@@ -19,8 +19,8 @@ import java.net.URL
 import java.security.MessageDigest
 
 /**
- * Downloads one set of models (speech for one language 290–730 MB, summaries ~2.6 GB), or what's missing
- * of it: for an installed set, an improved file that replaces an earlier one (see [Models.ModelFile.replaces]).
+ * Downloads one set of models (speech for one language 290–730 MB, language detection 160 MB, summaries ~2.6 GB), or
+ * what's missing of it: for an installed set, an improved file that replaces an earlier one (see [Models.ModelFile.replaces]).
  * Partial files are resumed, and every file's SHA-256 is checked before it is put in place,
  * so a broken download never reaches the engine.
  */
@@ -31,7 +31,11 @@ class ModelDownloadWorker(context: Context, params: WorkerParameters) : Coroutin
     // A job replaced by "Use mobile data" can still be finishing its last write when the new one
     // starts, so each set downloads under a lock and two workers never write the same file. The
     // speech sets share the speaker models, so they share a lock too.
-    override suspend fun doWork(): Result = (if (set == Models.Set.SUMMARY) summaryLock else speechLock).withLock { downloadSet() }
+    override suspend fun doWork(): Result = when (set) {
+        Models.Set.SUMMARY -> summaryLock
+        Models.Set.LANGUAGE_ID -> languageIdLock
+        else -> speechLock
+    }.withLock { downloadSet() }
 
     /** The set already works, on an earlier file that the one being downloaded replaces. */
     private var update = false
@@ -40,9 +44,15 @@ class ModelDownloadWorker(context: Context, params: WorkerParameters) : Coroutin
     private var start = 0L
 
     private suspend fun downloadSet(): Result {
-        // Only the chosen language's speech set is ever downloaded. A download queued for another (an update
-        // check racing a language change, say) would fetch hundreds of MB nobody asked for.
-        if (set != Models.Set.SUMMARY && Settings(applicationContext).current().language.set != set) return Result.success()
+        // Only the chosen language's speech set is ever downloaded, and language detection only while it's wanted. A
+        // download queued for another (an update check racing a language change, say) would fetch MBs nobody asked for.
+        val settings = Settings(applicationContext).current()
+        val unwanted = when (set) {
+            Models.Set.SUMMARY -> false
+            Models.Set.LANGUAGE_ID -> !Models.languageIdWanted(settings.detectLanguage, Models.sizes(applicationContext))
+            else -> settings.language.set != set
+        }
+        if (unwanted) return Result.success()
         // A partial download of a file this set has since replaced is never finished; free its space before the
         // storage check counts it (the folder check that also deletes it waits for setup to finish).
         Models.recognizerLock.withLock { Models.deleteObsolete(applicationContext, set) }
@@ -68,7 +78,7 @@ class ModelDownloadWorker(context: Context, params: WorkerParameters) : Coroutin
                 val free = Models.dir(applicationContext).usableSpace
                 if (free < needed + SPACE_MARGIN) {
                     val s = Settings(applicationContext).current()
-                    val removable = Models.removable(applicationContext, s.language.set, s.previousLanguage?.set).isNotEmpty()
+                    val removable = removingMakesRoom(set, s.language.set, s.previousLanguage?.set, Models.sizes(applicationContext))
                     return Result.failure(workDataOf(ERROR to notEnoughStorage(needed + SPACE_MARGIN - free, removable)))
                 }
                 val base = done
@@ -87,13 +97,15 @@ class ModelDownloadWorker(context: Context, params: WorkerParameters) : Coroutin
                 // (on battery, recent ones now and the rest on the charger).
                 AppDatabase.get(applicationContext).recordings().queueMissingSummaries()
                 Work.scanNow(applicationContext)
-            } else {
+            } else if (set != Models.Set.LANGUAGE_ID) {
                 Models.recognizerLock.withLock {
                     // Every file is in place and verified, so an earlier file one of them replaces has done its job.
                     Models.deleteObsolete(applicationContext, set)
                     // The other usable languages stay, for switching back; only what nothing can use goes.
                     Models.deleteAbandoned(applicationContext, Settings(applicationContext).current().language.set)
                 }
+                // A second language makes language detection worth having: it follows now, not at the next check.
+                Work.updateLanguageId(applicationContext)
             }
             Result.success()
         } catch (e: Exception) {
@@ -168,6 +180,7 @@ class ModelDownloadWorker(context: Context, params: WorkerParameters) : Coroutin
     companion object {
         private val speechLock = Mutex()
         private val summaryLock = Mutex()
+        private val languageIdLock = Mutex()
 
         const val SET = "set"
         /** Bytes missing when the download was requested: the baseline for its progress. */
@@ -176,6 +189,14 @@ class ModelDownloadWorker(context: Context, params: WorkerParameters) : Coroutin
         const val ERROR = "error"
         /** Room left free after a download, for transcripts and everything else on the phone. */
         private const val SPACE_MARGIN = 300_000_000L
+
+        /**
+         * Removing a language could make room for [set]: one can be removed, and for language detection, two would be
+         * left to detect between (of only two, removing one deletes detection's model too).
+         */
+        fun removingMakesRoom(set: Models.Set, chosen: Models.Set, previous: Models.Set?, sizes: Models.Sizes): Boolean =
+            Models.removable(chosen, previous, sizes).isNotEmpty() &&
+                (set != Models.Set.LANGUAGE_ID || Models.usableLanguages(sizes).size > 2)
 
         /** Why a download can't start: [bytes] more are needed. With a [removable] language, says that could make room. */
         fun notEnoughStorage(bytes: Long, removable: Boolean): String =
@@ -188,6 +209,7 @@ class ModelDownloadWorker(context: Context, params: WorkerParameters) : Coroutin
             Models.Set.MULTILINGUAL -> if (update) "Updating the European languages model" else "Downloading the European languages model"
             Models.Set.CJK -> "Downloading the Chinese, Japanese and Korean model"
             Models.Set.HINDI -> "Downloading the Hindi model"
+            Models.Set.LANGUAGE_ID -> "Downloading the language detection model"
         }
     }
 }

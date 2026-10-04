@@ -97,6 +97,8 @@ import io.github.christiantwu.longhand.data.Pipeline
 import io.github.christiantwu.longhand.data.Recording
 import io.github.christiantwu.longhand.data.RecordingStatus
 import io.github.christiantwu.longhand.data.SummaryStatus
+import io.github.christiantwu.longhand.data.detection
+import io.github.christiantwu.longhand.engine.CallLanguage
 import io.github.christiantwu.longhand.engine.Models
 import io.github.christiantwu.longhand.engine.SegmentLogic
 import io.github.christiantwu.longhand.engine.TranscriptEdits
@@ -404,7 +406,7 @@ fun TranscriptScreen(onBack: () -> Unit, onCallsWith: (PersonFilter) -> Unit) {
             onTranscribe = click@{ language ->
                 if (transcribeAgain == null) return@click
                 transcribeAgain = null
-                vm.retranscribe(language)
+                vm.retranscribe(language, offer.automatic)
             },
             onDismiss = { transcribeAgain = null },
         )
@@ -511,6 +513,8 @@ private fun Header(r: Recording) {
     )
     val kicker = listOfNotNull(CallText.direction(r)?.let { "$it call" } ?: "Call", date,
         r.durationMs.takeIf { it > 0 }?.let { SegmentLogic.formatDuration(it) },
+        // Detection put it in another language than Settings': this says why.
+        spokenLanguage(r),
         // Changed by hand, so no longer only what the recogniser heard.
         "Edited".takeIf { r.editedAt != null }).joinToString(" · ")
     Column(Modifier.fillMaxWidth().padding(start = 16.dp, end = 16.dp, top = 4.dp)) {
@@ -527,6 +531,15 @@ private fun Header(r: Recording) {
         }
         GradientRule(Modifier.padding(top = 16.dp))
     }
+}
+
+/**
+ * The language heard in the call, e.g. "Japanese", when detection put its transcript in another language than Settings'.
+ */
+private fun spokenLanguage(r: Recording): String? {
+    if (!r.languageDetected) return null
+    val detection = r.detection ?: return null
+    return CallLanguage.spokenName(detection, r.language?.let(CallLanguage.Family::of))
 }
 
 /** The tonal card that holds the summary, or the state of the call when there's no transcript yet. */
@@ -954,15 +967,17 @@ private fun WordChip(word: String, selected: Boolean, enabled: Boolean, onClick:
 }
 
 /**
- * "Transcribe again" with more than one language on the phone: which one to transcribe the call in. With [edited], it
- * also says the edits will be replaced, so that's one dialog, not two.
+ * "Transcribe again" with more than one language on the phone: which one to transcribe the call in, or with language
+ * detection on, Automatic (null): the one detected. With [edited], it also says the edits will be replaced, so that's
+ * one dialog, not two.
  */
 @Composable
 private fun TranscribeAgainDialog(
-    offer: TranscribeAgain.Offer, edited: Boolean, onTranscribe: (Models.Language) -> Unit, onDismiss: () -> Unit,
+    offer: TranscribeAgain.Offer, edited: Boolean, onTranscribe: (Models.Language?) -> Unit, onDismiss: () -> Unit,
 ) {
     val c = MaterialTheme.colorScheme
     var picked by remember(offer) { mutableStateOf(offer.preselected) }
+    val options: List<Models.Language?> = (if (offer.automatic) listOf(null) else emptyList()) + offer.languages
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Transcribe again") },
@@ -971,14 +986,14 @@ private fun TranscribeAgainDialog(
                 if (edited) Text("Your edits to this call will be replaced. Common corrections will be applied again.")
                 // The dialog sits on surfaceContainerHigh, so the rows take the next tone up to stand out.
                 Column(Modifier.semantics { selectableGroup() }, verticalArrangement = Arrangement.spacedBy(GroupGap)) {
-                    offer.languages.forEachIndexed { i, language ->
+                    options.forEachIndexed { i, language ->
                         val selected = language == picked
                         GroupRow(
-                            groupShape(i, offer.languages.size), color = c.surfaceContainerHighest,
+                            groupShape(i, options.size), color = c.surfaceContainerHighest,
                             action = Modifier.selectable(selected = selected, role = Role.RadioButton, onClick = { picked = language }),
                         ) {
                             RadioButton(selected = selected, onClick = null)
-                            RowText(languageName(language))
+                            if (language == null) RowText("Automatic", offer.automaticDetail) else RowText(languageName(language))
                         }
                     }
                 }

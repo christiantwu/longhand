@@ -14,7 +14,9 @@ import io.github.christiantwu.longhand.data.Recording
 import io.github.christiantwu.longhand.data.Segment
 import io.github.christiantwu.longhand.data.Settings
 import io.github.christiantwu.longhand.data.SummaryStatus
+import io.github.christiantwu.longhand.data.detection
 import io.github.christiantwu.longhand.engine.AudioDecoder
+import io.github.christiantwu.longhand.engine.LanguageDetector
 import io.github.christiantwu.longhand.engine.Models
 import io.github.christiantwu.longhand.engine.Summarizer
 import io.github.christiantwu.longhand.engine.TranscriptionEngine
@@ -39,9 +41,10 @@ import java.util.concurrent.CancellationException
 /**
  * Works through the queue in rounds: every PENDING recording is transcribed (speech models
  * loaded once), then every transcript waiting for a summary is summarized (summary model loaded
- * once), then, on the charger, transcripts made by an older pipeline are redone. The two model
- * sets are never in memory together, and new calls always go before redone ones.
- * Runs as a foreground job so Android doesn't stop it after 10 minutes.
+ * once), then, on the charger, transcripts made by an older pipeline are redone. Before a call's
+ * language is detected, the calls waiting for that are detected a few at a time, with the recognizer
+ * unloaded. No two of these models are ever in memory together, and new calls always go before
+ * redone ones. Runs as a foreground job so Android doesn't stop it after 10 minutes.
  */
 class TranscribeWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
 
@@ -130,6 +133,8 @@ class TranscribeWorker(context: Context, params: WorkerParameters) : CoroutineWo
         val done = ArrayList<Long>()
         var engine: TranscriptionEngine? = null
         var engineFiles: List<String>? = null
+        // Calls whose language detection was tried in this pass, whether it found anything or not: each is tried once.
+        val detectionTried = HashSet<Long>()
         try {
             while (!isStopped && !pausedForCall()) {
                 val rec = when {
@@ -138,13 +143,26 @@ class TranscribeWorker(context: Context, params: WorkerParameters) : CoroutineWo
                         !(summariesWaiting() && dao.requestedCount() > 0) -> dao.nextRedo()
                     else -> null
                 } ?: break
-                // Chosen afresh for every recording: the call's own language if one was chosen for it, else Settings'. A
-                // language chosen or finished downloading meanwhile, or an improved model file, takes over at once,
-                // instead of the old one carrying on through a long backlog.
                 val settings = Settings(applicationContext).current()
-                val language = Models.recognizerLock.withLock {
-                    val pick = Models.engineFor(rec.pinnedLanguage, settings.language, settings.previousLanguage,
-                        engineFiles.takeIf { engine != null }, Models.sizes(applicationContext)) ?: return@withLock null
+                if (rec.id !in detectionTried && Models.needsDetection(rec.pinnedLanguage, rec.spokenLanguages != null,
+                        settings.detectLanguage, Models.sizes(applicationContext))) {
+                    // Never the detection model and a recognizer in memory together, and neither loaded for every
+                    // call: the next few waiting calls that need it are detected now (a redo's only when it comes up),
+                    // then the loop goes on.
+                    engine?.close()
+                    engine = null
+                    val calls = if (redo) listOf(rec) else detectionBatch(rec, dao.pendingToDetect(since(), DETECT_BATCH), detectionTried)
+                    detectionTried += calls.map { it.id }
+                    detectLanguages(calls)
+                    continue
+                }
+                // Chosen afresh for every recording: the call's own language if one was chosen for it, else the one
+                // detected in it, else Settings'. A language chosen or finished downloading meanwhile, or an improved
+                // model file, takes over at once, instead of the old one carrying on through a long backlog.
+                val pick = Models.recognizerLock.withLock {
+                    val pick = Models.engineFor(rec.pinnedLanguage, rec.detection.takeIf { settings.detectLanguage }, settings.language,
+                        settings.previousLanguage, engineFiles.takeIf { engine != null }, Models.sizes(applicationContext))
+                        ?: return@withLock null
                     if (pick.reload) {
                         engine?.close() // never two engines in memory
                         engine = null
@@ -153,11 +171,11 @@ class TranscribeWorker(context: Context, params: WorkerParameters) : CoroutineWo
                         engineFiles = pick.files
                         Log.i(TAG, "speech models (${pick.language.set}, ${pick.files.first()}) loaded in ${SystemClock.elapsedRealtime() - t} ms")
                     }
-                    pick.language
+                    pick
                 } ?: break
                 // Read for every call: the owner may confirm their voice while a long batch runs.
                 val profile = VoiceProfile(applicationContext).load()
-                if (transcribe(rec, engine!!, language, profile, summariesOn(), redo)) done += rec.id
+                if (transcribe(rec, engine!!, pick.language, pick.detected, profile, summariesOn(), redo)) done += rec.id
             }
         } finally {
             engine?.close()
@@ -166,12 +184,76 @@ class TranscribeWorker(context: Context, params: WorkerParameters) : CoroutineWo
     }
 
     /**
+     * Detects the language of each of [calls], with Whisper loaded once and released after, and stores what it found
+     * (Recording.spokenLanguages). The recognizer lock is held while the model loads and while each call is detected,
+     * so its files can't be deleted underneath it; once detection is turned off or a language removed, it stops, and
+     * the calls left follow Settings.
+     */
+    private suspend fun detectLanguages(calls: List<Recording>) {
+        if (calls.isEmpty()) return
+        showProgress("Loading language detection…", null)
+        suspend fun available() = Models.canDetect(applicationContext, Settings(applicationContext).current().detectLanguage)
+        // Each call is marked before any native work on it (RecordingDao.startDetection), the first before Whisper even
+        // loads, so a call that crashes the app isn't detected again. Stopping short (detection turned off, the job
+        // stopped) takes the mark off the call it was on.
+        var current: Recording? = null
+        suspend fun start(rec: Recording) {
+            current = rec
+            dao.startDetection(rec.id, rec.sizeBytes, rec.lastModified)
+        }
+        var detector: LanguageDetector? = null
+        try {
+            start(calls.first())
+            val t = SystemClock.elapsedRealtime()
+            val lid = Models.recognizerLock.withLock {
+                // Checked again with the lock held: sherpa-onnx ends the app on a Whisper file that isn't the right one.
+                if (!available()) return
+                try {
+                    LanguageDetector(applicationContext)
+                } catch (e: Throwable) {
+                    // These calls are transcribed in Settings' language instead.
+                    Log.e(TAG, "language detection failed to load", e)
+                    return
+                }
+            }
+            detector = lid
+            Log.i(TAG, "language detection loaded in ${SystemClock.elapsedRealtime() - t} ms, for ${calls.size} calls")
+            for (rec in calls) {
+                if (isStopped || pausedForCall()) break
+                showProgress("${CallText.title(rec, format)} · detecting the language", null)
+                start(rec)
+                val started = SystemClock.elapsedRealtime()
+                try {
+                    val samples = AudioDecoder.decode(applicationContext, rec.documentUri.toUri()).mono
+                    val found = Models.recognizerLock.withLock { if (available()) lid.detect(samples) else null } ?: break
+                    dao.setDetection(rec.id, found.stored, found.speechSeconds, rec.sizeBytes, rec.lastModified)
+                    Log.i(TAG, "${rec.displayName}: languages ${found.codes} in %.1f s of speech, took %d ms"
+                        .format(found.speechSeconds, SystemClock.elapsedRealtime() - started))
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    // Transcribed in Settings' language; transcribing it reports what's wrong with the recording, if anything.
+                    Log.w(TAG, "language detection failed for ${rec.displayName}", e)
+                } catch (e: OutOfMemoryError) {
+                    Log.w(TAG, "out of memory detecting the language of ${rec.displayName}", e)
+                }
+                current = null
+            }
+        } finally {
+            detector?.close()
+            current?.let { withContext(NonCancellable) { dao.interruptDetection(it.id) } }
+        }
+    }
+
+    /**
      * A [redo] leaves the recording DONE, so its old transcript stays on show until the new one
-     * replaces it, and if the redo fails the old transcript simply stays. [engine] transcribes in [language].
+     * replaces it, and if the redo fails the old transcript simply stays. [engine] transcribes in [language], which
+     * was [detected] in the call or not.
      * @return true when a transcript was saved.
      */
     private suspend fun transcribe(
-        rec: Recording, engine: TranscriptionEngine, language: Models.Language, profile: FloatArray?, summarize: Boolean, redo: Boolean,
+        rec: Recording, engine: TranscriptionEngine, language: Models.Language, detected: Boolean, profile: FloatArray?,
+        summarize: Boolean, redo: Boolean,
     ): Boolean {
         if (redo) dao.startRedo(rec.id) else dao.markProcessing(rec.id)
         val name = CallText.title(rec, format)
@@ -215,6 +297,7 @@ class TranscribeWorker(context: Context, params: WorkerParameters) : CoroutineWo
                 processingMs = elapsed,
                 ownerSpeaker = owner,
                 language = language,
+                detected = detected,
                 pinned = rec.pinnedLanguage,
                 summarize = summarize,
                 redo = redo,
@@ -337,6 +420,20 @@ class TranscribeWorker(context: Context, params: WorkerParameters) : CoroutineWo
             // stopped after 10 minutes and resumes on the next run.
             Log.w(TAG, "could not go foreground: ${e.message}")
         }
+    }
+
+    companion object {
+        /** Calls detected in one go: a call asked for meanwhile waits for no more than these before it's transcribed. */
+        const val DETECT_BATCH = 8
+
+        /**
+         * The calls to detect now: [next], the call up, and the ones [waiting] after it in the order they're taken,
+         * leaving out those [tried] in this pass; at most [DETECT_BATCH]. A call asked for brings only other calls asked
+         * for, so it isn't transcribed after the backlog's detection.
+         */
+        fun detectionBatch(next: Recording, waiting: List<Recording>, tried: Set<Long>): List<Recording> =
+            (listOf(next) + waiting.filter { !next.requested || it.requested })
+                .distinctBy { it.id }.filter { it.id !in tried }.take(DETECT_BATCH)
     }
 }
 

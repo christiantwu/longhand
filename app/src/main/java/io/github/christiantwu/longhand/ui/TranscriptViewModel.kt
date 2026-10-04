@@ -29,6 +29,8 @@ import io.github.christiantwu.longhand.data.Segment
 import io.github.christiantwu.longhand.data.Settings
 import io.github.christiantwu.longhand.data.SpeakerName
 import io.github.christiantwu.longhand.data.SummaryStatus
+import io.github.christiantwu.longhand.data.detection
+import io.github.christiantwu.longhand.engine.CallLanguage
 import io.github.christiantwu.longhand.engine.Corrections
 import io.github.christiantwu.longhand.engine.Models
 import io.github.christiantwu.longhand.engine.TranscriptEdits
@@ -125,25 +127,56 @@ fun voiceSuggestions(
 
 /** "Transcribe again" with more than one language on the phone: the call can be transcribed in any of them. */
 object TranscribeAgain {
-    /** The [languages] to choose from, starting on [preselected]. */
-    class Offer(val languages: List<Models.Language>, val preselected: Models.Language)
+    /**
+     * The [languages] to choose from, starting on [preselected]. With [automatic], "Automatic" comes first (null in
+     * [preselected] and in the choice), saying [automaticDetail].
+     */
+    class Offer(
+        val languages: List<Models.Language>, val preselected: Models.Language?, val automatic: Boolean = false,
+        val automaticDetail: String = "",
+    )
 
     /**
-     * The language the choice starts on, of the [usable] ones: the call's [pinned] language, else the one its transcript
-     * was [madeWith], else the one Settings transcribes in (the [chosen] language, or while it downloads the [previous] one).
+     * The language the choice starts on, of the [usable] ones: the call's [pinned] language; else, with [automatic]
+     * detection, Automatic (null); else the one its transcript was [madeWith], else the one Settings transcribes in (the
+     * [chosen] language, or while it downloads the [previous] one). Null without [automatic] only when nothing is usable.
      */
     fun preselected(
         pinned: Models.Language?, madeWith: Models.Language?, chosen: Models.Language, previous: Models.Language?,
-        usable: List<Models.Language>,
-    ): Models.Language? = (listOfNotNull(pinned, madeWith, chosen, previous) + usable).firstOrNull { it in usable }
+        usable: List<Models.Language>, automatic: Boolean = false,
+    ): Models.Language? = pinned?.takeIf { it in usable }
+        ?: if (automatic) null else (listOfNotNull(madeWith, chosen, previous) + usable).firstOrNull { it in usable }
 
     /**
-     * The call's pinned language once [picked] is chosen: none for the language Settings transcribes in now (the
-     * [chosen] one, or while it downloads the [previous] one, since the chosen one isn't offered yet), which the call
-     * then follows.
+     * The call's pinned language once [picked] is chosen. Automatic (null) clears the pin. With [automatic] detection
+     * on offer, any language pins the call, Settings' too, or detection would override the pick. Without it, the
+     * language the call gets unpinned clears the pin: Settings' now (the [chosen] one, or while it downloads the
+     * [previous] one, since the chosen one isn't offered yet), or with detection on but its model not in, the one its
+     * stored [detection] found (pass it only with detection on).
      */
-    fun pin(picked: Models.Language, chosen: Models.Language, previous: Models.Language?, sizes: Models.Sizes): Models.Language? =
-        picked.takeUnless { it == (Models.languageFor(null, chosen, previous, sizes) ?: chosen) }
+    fun pin(
+        picked: Models.Language?, chosen: Models.Language, previous: Models.Language?, sizes: Models.Sizes,
+        automatic: Boolean = false, detection: CallLanguage.Detection? = null,
+    ): Models.Language? = when {
+        picked == null || automatic -> picked
+        else -> picked.takeUnless { it == (Models.languageFor(null, detection, chosen, previous, sizes) ?: chosen) }
+    }
+
+    /**
+     * What "Automatic" says, by the [detection] stored for the call: what it would be transcribed in, of the [usable]
+     * languages, or why it would follow Settings.
+     */
+    fun automaticDetail(detection: CallLanguage.Detection?, usable: List<Models.Language>): String {
+        if (detection == null) return "Detects the language spoken"
+        if (detection.speechSeconds < CallLanguage.MIN_SPEECH_SECONDS) return "Too little speech to tell"
+        val language = CallLanguage.languageOf(detection)
+            ?: return if (detection.codes.none { CallLanguage.family(it) != CallLanguage.Family.OTHER }) "No downloaded language detected"
+                else "No single language detected"
+        // Whisper's stand-ins for European languages aren't named (CallLanguage.spoken).
+        val name = CallLanguage.spokenName(detection)
+            ?: if (language == Models.Language.EUROPEAN) "a European language" else languageName(language)
+        return "Detected: $name" + if (language in usable) "" else ", not downloaded"
+    }
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -564,27 +597,45 @@ class TranscriptViewModel(app: Application, savedState: SavedStateHandle) : Andr
 
     // ---------------------------------------------------------------- queue & export
 
-    /** What "Transcribe again" offers; null with fewer than two languages on the phone, when there's nothing to choose. */
+    /**
+     * What "Transcribe again" offers; null with fewer than two languages on the phone, when there's nothing to choose.
+     * With language detection on and its model in, it offers Automatic too.
+     */
     suspend fun transcribeAgainOffer(): TranscribeAgain.Offer? = withContext(Dispatchers.IO) {
         val rec = dao.get(id) ?: return@withContext null
-        val usable = Models.usableLanguages(getApplication<Application>())
+        val sizes = Models.sizes(getApplication())
+        val usable = Models.usableLanguages(sizes)
         if (usable.size < 2) return@withContext null
         val s = settingsStore.current()
-        TranscribeAgain.preselected(rec.pinnedLanguage, rec.language, s.language, s.previousLanguage, usable)
-            ?.let { TranscribeAgain.Offer(usable, it) }
+        val automatic = Models.canDetect(s.detectLanguage, sizes)
+        TranscribeAgain.Offer(
+            usable, TranscribeAgain.preselected(rec.pinnedLanguage, rec.language, s.language, s.previousLanguage, usable, automatic),
+            automatic, TranscribeAgain.automaticDetail(rec.detection, usable),
+        )
     }
 
     /**
      * Queues this recording again and starts right away, regardless of the charging setting. Edits by hand are replaced
-     * (the screen asks first), so the call stops counting as edited. A [language] chosen for it stays with the call, for
-     * its later transcriptions too, unless it's the one chosen in Settings: then the call follows Settings again.
+     * (the screen asks first), so the call stops counting as edited. Its language stays as it is.
      */
-    fun retranscribe(language: Models.Language? = null) = viewModelScope.launch(Dispatchers.IO) {
+    fun retranscribe() = requeue { }
+
+    /**
+     * [retranscribe] in the language [picked] in "Transcribe again", or with Automatic (null) in the one detected: it
+     * stays with the call for its later transcriptions too ([TranscribeAgain.pin], with [automatic] on offer or not).
+     */
+    fun retranscribe(picked: Models.Language?, automatic: Boolean) = requeue {
+        // Automatic asked for: a call left undecided by a stop mid-detection ([RecordingDao.startDetection]) gets one more try.
+        if (picked == null && automatic) dao.interruptDetection(id)
+        val s = settingsStore.current()
+        val detection = dao.get(id)?.detection?.takeIf { s.detectLanguage }
+        val sizes = Models.sizes(getApplication())
+        dao.setPinnedLanguage(id, TranscribeAgain.pin(picked, s.language, s.previousLanguage, sizes, automatic, detection))
+    }
+
+    private fun requeue(before: suspend () -> Unit) = viewModelScope.launch(Dispatchers.IO) {
         forgetUndo()
-        if (language != null) {
-            val s = settingsStore.current()
-            dao.setPinnedLanguage(id, TranscribeAgain.pin(language, s.language, s.previousLanguage, Models.sizes(getApplication())))
-        }
+        before()
         dao.forgetEdits(id)
         dao.requeue(listOf(id))
         dao.request(listOf(id))

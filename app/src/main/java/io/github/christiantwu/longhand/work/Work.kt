@@ -26,6 +26,7 @@ import io.github.christiantwu.longhand.R
 import io.github.christiantwu.longhand.data.Settings
 import io.github.christiantwu.longhand.engine.Models
 import io.github.christiantwu.longhand.ui.MainActivity
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.TimeUnit
 
@@ -151,11 +152,12 @@ object Work {
     }
 
     /**
-     * Brings the chosen language's models up to date; the folder check runs this every 15 minutes and when the
-     * app opens. An improved file that replaces an earlier one downloads like any model, over Wi-Fi, while the
-     * earlier one keeps transcribing, and what earlier files leave behind is deleted. A failed update keeps its
-     * error and Retry in Settings instead of starting over at every check; WorkManager forgets the failure
-     * after a day, and the next check tries again. Other languages kept on the phone update once chosen again.
+     * Brings the chosen language's models up to date, and the language detection model ([updateLanguageId]); the
+     * folder check runs this every 15 minutes and when the app opens. An improved file that replaces an earlier one
+     * downloads like any model, over Wi-Fi, while the earlier one keeps transcribing, and what earlier files leave
+     * behind is deleted. A failed update keeps its error and Retry in Settings instead of starting over at every check;
+     * WorkManager forgets the failure after a day, and the next check tries again. Other languages kept on the phone
+     * update once chosen again.
      */
     suspend fun updateModels(context: Context) {
         val chosen = Settings(context).current().language.set
@@ -164,11 +166,40 @@ object Work {
             Models.speechSets.forEach { Models.deleteObsolete(context, it) }
             Models.deleteAbandoned(context, chosen)
         }
-        if (!Models.needsUpdate(context, chosen)) return
-        val failed = WorkManager.getInstance(context).getWorkInfosForUniqueWork(downloadName(chosen)).get()
-            .any { it.state == WorkInfo.State.FAILED }
-        if (!failed) downloadModels(context, chosen)
+        updateLanguageId(context)
+        if (Models.needsUpdate(context, chosen) && !failed(context, chosen)) downloadModels(context, chosen)
     }
+
+    /**
+     * Downloads the language detection model when it's wanted (Models.languageIdWanted: turned on, with two or more
+     * languages downloaded), over Wi-Fi like the others, and deletes it when it isn't. Run on each folder check, when
+     * a language finishes downloading or is removed, and with [detect] when detection is turned on or off: turned on,
+     * a download that failed is tried again.
+     */
+    suspend fun updateLanguageId(context: Context, detect: Boolean? = null) = languageIdLock.withLock {
+        val settings = Settings(context)
+        if (detect != null) settings.setDetectLanguage(detect)
+        val set = Models.Set.LANGUAGE_ID
+        val sizes = Models.sizes(context)
+        if (!Models.languageIdWanted(settings.current().detectLanguage, sizes)) {
+            WorkManager.getInstance(context).cancelUniqueWork(downloadName(set)).result.get()
+            // Detection holds the lock while it uses the model: it's deleted once that's done.
+            if (Models.languageIdPaths(sizes).isNotEmpty()) Models.recognizerLock.withLock { Models.removeLanguageId(context) }
+            return@withLock
+        }
+        if (Models.missingBytes(set, sizes) > 0 && (detect == true || !failed(context, set))) downloadModels(context, set)
+    }
+
+    /**
+     * Held from reading detection's setting and the languages on the phone to acting on them, so a check that read them
+     * just before a change can't download the model after it's been turned off or deleted, or cancel it after it's
+     * been turned on.
+     */
+    private val languageIdLock = Mutex()
+
+    /** [set]'s last download failed: it keeps its error and Retry until the user retries or WorkManager forgets it. */
+    private fun failed(context: Context, set: Models.Set): Boolean =
+        WorkManager.getInstance(context).getWorkInfosForUniqueWork(downloadName(set)).get().any { it.state == WorkInfo.State.FAILED }
 
     /** Re-labels "You" across transcripts after the user confirms their voice. */
     fun matchVoices(context: Context) {

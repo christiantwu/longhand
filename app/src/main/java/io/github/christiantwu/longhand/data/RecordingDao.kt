@@ -127,6 +127,34 @@ interface RecordingDao {
     @Query("SELECT COUNT(*) FROM recordings WHERE status = 'PENDING' AND (lastModified >= :since OR requested = 1)")
     suspend fun pendingCount(since: Long = 0): Int
 
+    /** The first [limit] waiting recordings [nextPending] would take, in its order, with no language chosen or detected yet. */
+    @Query(
+        """SELECT * FROM recordings WHERE status = 'PENDING' AND (lastModified >= :since OR requested = 1)
+           AND pinnedLanguage IS NULL AND spokenLanguages IS NULL ORDER BY requested DESC, lastModified ASC LIMIT :limit"""
+    )
+    suspend fun pendingToDetect(since: Long, limit: Int): List<Recording>
+
+    /**
+     * Counted before detection reads the call: marked detected with nothing found, so it follows Settings. If the app
+     * dies detecting it, it's transcribed next time, where its attempts are counted, instead of detected again.
+     */
+    @Query(
+        """UPDATE recordings SET spokenLanguages = '', speechSeconds = 0
+           WHERE id = :id AND spokenLanguages IS NULL AND sizeBytes = :size AND lastModified = :modified"""
+    )
+    suspend fun startDetection(id: Long, size: Long, modified: Long)
+
+    /** Detection was stopped before it finished ([startDetection]): the call is detected another time. */
+    @Query("UPDATE recordings SET spokenLanguages = NULL, speechSeconds = NULL WHERE id = :id AND spokenLanguages = ''")
+    suspend fun interruptDetection(id: Long)
+
+    /** What language detection found in the call, unless its file changed since it was read ([size], [modified]). */
+    @Query(
+        """UPDATE recordings SET spokenLanguages = :codes, speechSeconds = :speechSeconds
+           WHERE id = :id AND sizeBytes = :size AND lastModified = :modified"""
+    )
+    suspend fun setDetection(id: Long, codes: String, speechSeconds: Float, size: Long, modified: Long)
+
     /** Recordings the user asked for whose transcript or summary is still to come. */
     @Query("SELECT COUNT(*) FROM recordings WHERE requested = 1 AND (status = 'PENDING' OR summaryStatus = 'PENDING')")
     suspend fun requestedCount(): Int
@@ -145,8 +173,14 @@ interface RecordingDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertAll(recordings: List<Recording>)
 
-    /** Only the file columns: the worker may be changing the status at the same moment. */
-    @Query("UPDATE recordings SET sizeBytes = :size, lastModified = :modified, displayName = :name WHERE id = :id")
+    /**
+     * Only the file columns: the worker may be changing the status at the same moment. The file changed, so the language
+     * detected in it is detected again.
+     */
+    @Query(
+        """UPDATE recordings SET sizeBytes = :size, lastModified = :modified, displayName = :name, spokenLanguages = NULL,
+           speechSeconds = NULL WHERE id = :id"""
+    )
     suspend fun updateFileInfo(id: Long, size: Long, modified: Long, name: String)
 
     @Query("UPDATE recordings SET status = 'PROCESSING', progress = 0, error = NULL, attempts = attempts + 1 WHERE id = :id")
@@ -215,7 +249,7 @@ interface RecordingDao {
     @Query(
         """UPDATE recordings SET status = 'DONE', progress = 1, error = NULL, attempts = 0, durationMs = :durationMs,
            transcribedAt = :at, processingMs = :processingMs, ownerSpeaker = :ownerSpeaker, ownerManual = 0, editedAt = NULL,
-           language = :language,
+           language = :language, languageDetected = :languageDetected,
            topic = CASE WHEN :keepSummary THEN topic ELSE NULL END,
            summary = CASE WHEN :keepSummary THEN summary ELSE NULL END,
            followUps = CASE WHEN :keepSummary THEN followUps ELSE NULL END,
@@ -225,13 +259,13 @@ interface RecordingDao {
     )
     suspend fun markDone(
         id: Long, durationMs: Long, at: Long, processingMs: Long, ownerSpeaker: Int?, language: Models.Language,
-        summaryStatus: SummaryStatus, keepSummary: Boolean, pipeline: Int, redo: Boolean,
+        languageDetected: Boolean, summaryStatus: SummaryStatus, keepSummary: Boolean, pipeline: Int, redo: Boolean,
     )
 
     /**
-     * Stores a finished transcript, made in [language], with its speakers' voice fingerprints, and queues a new summary
-     * when [summarize] is true. [segments] say what the recogniser wrote; common corrections are
-     * applied here, keeping that as Segment.recognized. Speakers are numbered afresh, so names given
+     * Stores a finished transcript, made in [language] ([detected]: the one detection found), with its speakers' voice
+     * fingerprints, and queues a new summary when [summarize] is true. [segments] say what the recogniser wrote; common
+     * corrections are applied here, keeping that as Segment.recognized. Speakers are numbered afresh, so names given
      * to the previous transcript's speakers are dropped, and so are their links to known voices and
      * the suggestions turned down for them. A [redo] of an old transcript (the same audio) keeps its
      * summary until the new one replaces it, unless no speech was found this time, and isn't
@@ -248,6 +282,7 @@ interface RecordingDao {
         processingMs: Long,
         ownerSpeaker: Int?,
         language: Models.Language,
+        detected: Boolean,
         pinned: Models.Language?,
         summarize: Boolean,
         redo: Boolean = false,
@@ -270,7 +305,7 @@ interface RecordingDao {
         deleteVoiceSamples(id)
         deleteVoiceRejections(id)
         deleteUnusedKnownVoices()
-        markDone(id, durationMs, System.currentTimeMillis(), processingMs, ownerSpeaker, language,
+        markDone(id, durationMs, System.currentTimeMillis(), processingMs, ownerSpeaker, language, detected,
             if (summarize && segments.isNotEmpty()) SummaryStatus.PENDING else SummaryStatus.NONE,
             keepSummary = redo && segments.isNotEmpty(), pipeline = Pipeline.CURRENT, redo = redo)
         return true

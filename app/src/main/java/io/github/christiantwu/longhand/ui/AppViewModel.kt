@@ -180,8 +180,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val cjkModels = modelState(Models.Set.CJK)
     val hindiModels = modelState(Models.Set.HINDI)
     val summaryModel = modelState(Models.Set.SUMMARY)
+    val languageIdModel = modelState(Models.Set.LANGUAGE_ID)
 
     private val speechStates = listOf(speechModels, multilingualModels, cjkModels, hindiModels)
+
+    /** How many languages calls can be transcribed in now: with two or more, each call's can be detected. */
+    val usableLanguages: StateFlow<Int> = combine(speechStates) { sets -> sets.count { it.installed } }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, Models.usableLanguages(app).size)
 
     /** Calls can be transcribed: some language's models are in place. */
     val speechReady: StateFlow<Boolean> = combine(speechStates) { sets -> sets.any { it.installed } }
@@ -274,6 +279,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (language.set !in Models.removable(app, s.language.set, s.previousLanguage?.set)) return@withLock
         workManager.cancelUniqueWork(Work.downloadName(language.set)).result.get()
         Models.recognizerLock.withLock { Models.removeRecognizers(app, listOf(language.set)) }
+        // With one language left, there's nothing to detect between: its model goes too.
+        Work.updateLanguageId(app)
+        refreshTick.value++
+    } }
+
+    /** Turning detection on downloads its model (over Wi-Fi, retrying one that failed); turning it off deletes it. */
+    fun setDetectLanguage(on: Boolean) = viewModelScope.launch(Dispatchers.IO) { languageLock.withLock {
+        Work.updateLanguageId(getApplication(), detect = on)
         refreshTick.value++
     } }
 

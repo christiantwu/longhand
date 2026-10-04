@@ -107,4 +107,18 @@ class MigrationTest {
             columns(5, "recordings") - columns(4, "recordings").keys,
         )
     }
+
+    @Test fun version6AddsTheDetectionColumnsAsRoomExportsThem() {
+        val sql = executed { AppDatabase.MIGRATION_5_6.migrate(it) }
+        assertEquals(tables(5), tables(6))
+        assertEquals(setOf("recordings"), assertAddsColumns(5, sql))
+        // No call has been detected yet, and no transcript's language came from detection.
+        assertEquals(
+            mapOf(
+                "`spokenLanguages`" to "`spokenLanguages` TEXT", "`speechSeconds`" to "`speechSeconds` REAL",
+                "`languageDetected`" to "`languageDetected` INTEGER NOT NULL DEFAULT 0",
+            ),
+            columns(6, "recordings") - columns(5, "recordings").keys,
+        )
+    }
 }

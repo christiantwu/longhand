@@ -1,5 +1,6 @@
 package io.github.christiantwu.longhand
 
+import io.github.christiantwu.longhand.engine.CallLanguage
 import io.github.christiantwu.longhand.engine.Models
 import io.github.christiantwu.longhand.engine.Models.Set.CJK
 import io.github.christiantwu.longhand.engine.Models.Set.HINDI
@@ -242,8 +243,7 @@ class ModelsTest {
 
     @Test fun sizesCountOnlyWhatIsMissing() {
         val english = Disk().add(SPEECH)
-        val speaker = Models.Set.entries.filter { it != Models.Set.SUMMARY }
-            .map { s -> s.files.toSet() }.reduce { a, b -> a intersect b }.sumOf { it.sizeBytes }
+        val speaker = Models.speechSets.map { s -> s.files.toSet() }.reduce { a, b -> a intersect b }.sumOf { it.sizeBytes }
         // The speaker models are shared, so another language needs only its recognizer.
         assertEquals(MULTILINGUAL.totalBytes - speaker, Models.missingBytes(MULTILINGUAL, english))
         assertEquals(CJK.totalBytes - speaker, Models.missingBytes(CJK, english))
@@ -304,31 +304,31 @@ class ModelsTest {
 
     @Test fun aCallPinnedToALanguageUsesItWhileItIsOnThePhone() {
         val disk = Disk().add(SPEECH, CJK)
-        assertEquals(Models.Language.CJK, Models.languageFor(Models.Language.CJK, Models.Language.ENGLISH, null, disk))
-        assertEquals(Models.Language.ENGLISH, Models.languageFor(Models.Language.ENGLISH, Models.Language.CJK, null, disk))
+        assertEquals(Models.Language.CJK, Models.languageFor(Models.Language.CJK, null, Models.Language.ENGLISH, null, disk))
+        assertEquals(Models.Language.ENGLISH, Models.languageFor(Models.Language.ENGLISH, null, Models.Language.CJK, null, disk))
         // Removed: the call follows Settings. The pin stays, so once it's downloaded again the call uses it again.
         Models.recognizerPaths(listOf(CJK)).forEach { disk.files.remove(it) }
-        assertEquals(Models.Language.ENGLISH, Models.languageFor(Models.Language.CJK, Models.Language.ENGLISH, null, disk))
+        assertEquals(Models.Language.ENGLISH, Models.languageFor(Models.Language.CJK, null, Models.Language.ENGLISH, null, disk))
         disk.add(CJK)
-        assertEquals(Models.Language.CJK, Models.languageFor(Models.Language.CJK, Models.Language.ENGLISH, null, disk))
+        assertEquals(Models.Language.CJK, Models.languageFor(Models.Language.CJK, null, Models.Language.ENGLISH, null, disk))
         // Half downloaded isn't usable.
         disk.files[HINDI.part("encoder").path] = HINDI.part("encoder").sizeBytes
-        assertEquals(Models.Language.ENGLISH, Models.languageFor(Models.Language.HINDI, Models.Language.ENGLISH, null, disk))
+        assertEquals(Models.Language.ENGLISH, Models.languageFor(Models.Language.HINDI, null, Models.Language.ENGLISH, null, disk))
         // An earlier install, still on the encoder an improved one replaces, is usable.
         val earlierEnglish = earlier(SPEECH).add(MULTILINGUAL)
-        assertEquals(Models.Language.ENGLISH, Models.languageFor(Models.Language.ENGLISH, Models.Language.EUROPEAN, null, earlierEnglish))
+        assertEquals(Models.Language.ENGLISH, Models.languageFor(Models.Language.ENGLISH, null, Models.Language.EUROPEAN, null, earlierEnglish))
         // Nothing usable: nothing to transcribe with, pinned or not.
-        assertNull(Models.languageFor(Models.Language.CJK, Models.Language.ENGLISH, null, Disk()))
+        assertNull(Models.languageFor(Models.Language.CJK, null, Models.Language.ENGLISH, null, Disk()))
     }
 
     @Test fun aPinnedLanguageGoesBeforeTheOneTranscribingWhileSettingsLanguageDownloads() {
         val disk = Disk().add(SPEECH, MULTILINGUAL)
-        assertEquals(Models.Language.EUROPEAN, Models.languageFor(null, Models.Language.HINDI, Models.Language.EUROPEAN, disk))
-        assertEquals(Models.Language.ENGLISH, Models.languageFor(Models.Language.ENGLISH, Models.Language.HINDI, Models.Language.EUROPEAN, disk))
+        assertEquals(Models.Language.EUROPEAN, Models.languageFor(null, null, Models.Language.HINDI, Models.Language.EUROPEAN, disk))
+        assertEquals(Models.Language.ENGLISH, Models.languageFor(Models.Language.ENGLISH, null, Models.Language.HINDI, Models.Language.EUROPEAN, disk))
         // Once it's in, Settings' language takes over for the calls that follow Settings, but not for a pinned one.
         disk.add(HINDI)
-        assertEquals(Models.Language.HINDI, Models.languageFor(null, Models.Language.HINDI, Models.Language.EUROPEAN, disk))
-        assertEquals(Models.Language.ENGLISH, Models.languageFor(Models.Language.ENGLISH, Models.Language.HINDI, Models.Language.EUROPEAN, disk))
+        assertEquals(Models.Language.HINDI, Models.languageFor(null, null, Models.Language.HINDI, Models.Language.EUROPEAN, disk))
+        assertEquals(Models.Language.ENGLISH, Models.languageFor(Models.Language.ENGLISH, null, Models.Language.HINDI, Models.Language.EUROPEAN, disk))
     }
 
     @Test fun aCallWithoutAPinFollowsSettingsAsTheRecognizerDoes() {
@@ -336,7 +336,7 @@ class ModelsTest {
         val previous = listOf(null) + Models.Language.entries
         for (disk in disks) for (chosen in Models.Language.entries) for (before in previous) {
             assertEquals("$chosen after $before", Models.recognizer(chosen.set, before?.set, disk),
-                Models.languageFor(null, chosen, before, disk)?.set)
+                Models.languageFor(null, null, chosen, before, disk)?.set)
         }
     }
 
@@ -420,6 +420,18 @@ class ModelsTest {
             ModelDownloadWorker.notEnoughStorage(412_345_678, removable = true))
     }
 
+    @Test fun removingALanguageMakesRoomForDetectionOnlyWithMoreThanTwo() {
+        val languageId = Models.Set.LANGUAGE_ID
+        val two = Disk().add(SPEECH, CJK)
+        // Hindi downloading while English transcribes: Chinese, Japanese and Korean could go.
+        assertTrue(ModelDownloadWorker.removingMakesRoom(HINDI, HINDI, SPEECH, two))
+        // Of two, removing one would delete the detection model too.
+        assertFalse(ModelDownloadWorker.removingMakesRoom(languageId, SPEECH, null, two))
+        assertTrue(ModelDownloadWorker.removingMakesRoom(languageId, SPEECH, null, Disk().add(SPEECH, CJK, HINDI)))
+        // Nothing to remove.
+        assertFalse(ModelDownloadWorker.removingMakesRoom(MULTILINGUAL, MULTILINGUAL, SPEECH, Disk().add(SPEECH)))
+    }
+
     @Test fun updateLine() {
         assertNull(ModelState(installed = true).updateText)
         assertNull(ModelState(installed = false, downloading = true).updateText)
@@ -437,6 +449,120 @@ class ModelsTest {
         assertEquals("Updating the European languages model", ModelDownloadWorker.title(MULTILINGUAL, update = true))
         assertEquals("Downloading the European languages model", ModelDownloadWorker.title(MULTILINGUAL, update = false))
         assertEquals("Downloading the Hindi model", ModelDownloadWorker.title(HINDI, update = false))
+    }
+
+    private val languageId = Models.Set.LANGUAGE_ID
+
+    @Test fun languageDetectionIsWhisperBaseFromHuggingFace() {
+        assertEquals(listOf("whisper/base-encoder.int8.onnx", "whisper/base-decoder.int8.onnx"), languageId.files.map { it.path })
+        for (f in languageId.files) {
+            assertEquals("https://huggingface.co/csukuangfj/sherpa-onnx-whisper-base/resolve/bb53ee204431c90d314c1cc08d28d23e5b7927cc/" +
+                f.path.removePrefix("whisper/"), f.url)
+            assertNull(f.replaces)
+        }
+        assertEquals(listOf(29_120_534L, 130_672_026L), languageId.files.map { it.sizeBytes })
+        assertEquals("0b8fb1304b6109976038efff5ace81720e00386f3ff6b54ee8c75291ca0a1e11", languageId.files[0].sha256)
+        assertEquals("9759d217388a01b3a4c7c15533201067b48ae819c4daafc8624e64b9409dc02d", languageId.files[1].sha256)
+        assertEquals(160, Math.round(languageId.totalBytes / 1e6).toInt())
+        // Not a language to transcribe in, and nothing of it is shared with them.
+        assertFalse(languageId in Models.speechSets)
+        assertTrue(Models.speechSets.flatMap { it.files }.none { it in languageId.files })
+        assertEquals("Downloading the language detection model", ModelDownloadWorker.title(languageId, update = false))
+    }
+
+    @Test fun detectionIsWantedWithTwoLanguagesToChooseBetween() {
+        assertFalse(Models.languageIdWanted(true, Disk()))
+        assertFalse(Models.languageIdWanted(true, Disk().add(SPEECH)))
+        assertTrue(Models.languageIdWanted(true, Disk().add(SPEECH, CJK)))
+        assertTrue(Models.languageIdWanted(true, earlier(SPEECH).add(HINDI)))
+        // Turned off, or the second language still downloading.
+        assertFalse(Models.languageIdWanted(false, Disk().add(SPEECH, CJK)))
+        assertFalse(Models.languageIdWanted(true, Disk().add(SPEECH).also { it.files[CJK.part("model").path] = 1_000 }))
+    }
+
+    @Test fun callsAreDetectedOnceTheModelIsIn() {
+        val disk = Disk().add(SPEECH, MULTILINGUAL)
+        assertFalse(Models.canDetect(true, disk))
+        assertFalse(Models.needsDetection(null, detected = false, detect = true, disk))
+        // Half of it isn't enough: a wrong Whisper file would end the app.
+        disk.files[languageId.files[0].path] = languageId.files[0].sizeBytes
+        disk.files[languageId.files[1].path] = languageId.files[1].sizeBytes - 1
+        assertFalse(Models.canDetect(true, disk))
+        disk.add(languageId)
+        assertTrue(Models.canDetect(true, disk))
+        assertTrue(Models.needsDetection(null, detected = false, detect = true, disk))
+        // Once each, never for a call pinned to a language by hand, and not with detection off or one language left.
+        assertFalse(Models.needsDetection(null, detected = true, detect = true, disk))
+        assertFalse(Models.needsDetection(Models.Language.ENGLISH, detected = false, detect = true, disk))
+        assertFalse(Models.needsDetection(null, detected = false, detect = false, disk))
+        Models.recognizerPaths(listOf(MULTILINGUAL)).forEach { disk.files.remove(it) }
+        assertFalse(Models.needsDetection(null, detected = false, detect = true, disk))
+    }
+
+    @Test fun whatGoesWhenDetectionIsNotWanted() {
+        assertEquals(emptyList<String>(), Models.languageIdPaths(Disk().add(SPEECH, CJK)))
+        val disk = Disk().add(SPEECH).also {
+            it.files[languageId.files[0].path] = languageId.files[0].sizeBytes
+            it.files["${languageId.files[1].path}.part"] = 5_000_000
+        }
+        assertEquals(listOf("whisper/base-encoder.int8.onnx", "whisper/base-decoder.int8.onnx.part"), Models.languageIdPaths(disk))
+        // It's no language's: removing or abandoning one never touches it.
+        assertTrue(Models.recognizerPaths(Models.speechSets).none { it.startsWith("whisper/") })
+        assertEquals(emptyList<String>(), Models.abandonedPaths(SPEECH, disk.add(languageId)))
+    }
+
+    private fun detection(codes: String, speechSeconds: Float = 40f) = CallLanguage.Detection(codes.split(","), speechSeconds)
+
+    @Test fun aCallIsTranscribedInTheLanguageDetectedWhileItIsDownloaded() {
+        val disk = Disk().add(SPEECH, CJK)
+        val japanese = detection("ja,ja,en")
+        assertEquals(Models.Language.CJK, Models.languageFor(null, japanese, Models.Language.ENGLISH, null, disk))
+        // Not downloaded: the call follows Settings.
+        assertEquals(Models.Language.ENGLISH, Models.languageFor(null, detection("de,de,de"), Models.Language.ENGLISH, null, disk))
+        assertEquals(Models.Language.CJK, Models.languageFor(null, detection("de,de,de"), Models.Language.CJK, null, disk))
+        // Too little speech, or no clear answer: Settings too.
+        assertEquals(Models.Language.ENGLISH, Models.languageFor(null, detection("ja", 8f), Models.Language.ENGLISH, null, disk))
+        assertEquals(Models.Language.ENGLISH, Models.languageFor(null, detection("ja,ar,ar"), Models.Language.ENGLISH, null, disk))
+        // A language chosen by hand goes first; one removed since doesn't.
+        assertEquals(Models.Language.ENGLISH, Models.languageFor(Models.Language.ENGLISH, japanese, Models.Language.CJK, null, disk))
+        assertEquals(Models.Language.CJK, Models.languageFor(Models.Language.HINDI, japanese, Models.Language.ENGLISH, null, disk))
+    }
+
+    @Test fun anEnglishCallGoesToTheEnglishModel() {
+        val disk = Disk().add(SPEECH, CJK)
+        assertEquals(Models.Language.ENGLISH, Models.languageFor(null, detection("en,en,en"), Models.Language.CJK, null, disk))
+        // Only when every window says English.
+        assertEquals(Models.Language.CJK, Models.languageFor(null, detection("en,en,ar"), Models.Language.CJK, null, disk))
+        // Without the English model, it stays with Settings', which transcribes English too.
+        val noEnglish = Disk().add(MULTILINGUAL, CJK)
+        assertEquals(Models.Language.CJK, Models.languageFor(null, detection("en,en,en"), Models.Language.CJK, null, noEnglish))
+    }
+
+    @Test fun theEngineSaysWhetherDetectionChoseTheLanguage() {
+        val disk = Disk().add(SPEECH, CJK)
+        val detected = Models.engineFor(null, detection("ko,ko,ko"), Models.Language.ENGLISH, null, loaded = null, disk)!!
+        assertEquals(Models.Language.CJK, detected.language)
+        assertTrue(detected.detected)
+        // The same language, already loaded, for the next call.
+        assertFalse(Models.engineFor(null, detection("ja,ja,ja"), Models.Language.ENGLISH, null, detected.files, disk)!!.reload)
+        // Detection agreeing with Settings made no difference, so there's nothing to say: an English call under
+        // English Settings isn't marked English.
+        assertFalse(Models.engineFor(null, detection("ja,ja,ja"), Models.Language.CJK, null, detected.files, disk)!!.detected)
+        val english = Models.engineFor(null, detection("en,en,en"), Models.Language.ENGLISH, null, null, disk)!!
+        assertEquals(Models.Language.ENGLISH, english.language)
+        assertFalse(english.detected)
+        // Nor while Settings' language downloads and the one used before, which detection found, transcribes.
+        assertFalse(Models.engineFor(null, detection("ja,ja,ja"), Models.Language.HINDI, Models.Language.CJK, null, disk)!!.detected)
+        assertTrue(Models.engineFor(null, detection("ja,ja,ja"), Models.Language.HINDI, Models.Language.ENGLISH, null, disk)!!.detected)
+        val pinned = Models.engineFor(Models.Language.CJK, detection("ja,ja,ja"), Models.Language.ENGLISH, null, detected.files, disk)!!
+        assertEquals(Models.Language.CJK, pinned.language)
+        assertFalse(pinned.detected)
+        val stays = Models.engineFor(null, detection("de,de,de"), Models.Language.ENGLISH, null, detected.files, disk)!!
+        assertEquals(Models.Language.ENGLISH, stays.language)
+        assertFalse(stays.detected)
+        assertTrue(stays.reload)
+        // Detection off: no detection is passed, and the call follows Settings.
+        assertFalse(Models.engineFor(null, null, Models.Language.ENGLISH, null, stays.files, disk)!!.detected)
     }
 
     @Test fun startsFromThePhonesLanguage() {

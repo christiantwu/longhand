@@ -55,6 +55,8 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit, onCorrections: () -> Un
     val device by vm.deviceState.collectAsStateWithLifecycle()
     val known by vm.knownVoices.collectAsStateWithLifecycle()
     val corrections by vm.corrections.collectAsStateWithLifecycle()
+    val usableLanguages by vm.usableLanguages.collectAsStateWithLifecycle()
+    val languageId by vm.languageIdModel.collectAsStateWithLifecycle()
     var confirmForgetVoices by remember { mutableStateOf(false) }
     val s = settings ?: return
 
@@ -211,6 +213,7 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit, onCorrections: () -> Un
 
             Section("Transcription language") {
                 LanguageChoice(s.language, vm)
+                if (usableLanguages >= 2) DetectLanguage(s.detectLanguage, languageId, vm)
                 val model = when (s.language) {
                     Models.Language.CJK -> "SenseVoice Small"
                     Models.Language.HINDI -> "Nemotron 3.5 ASR Streaming 0.6B"
@@ -252,6 +255,47 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit, onCorrections: () -> Un
                 }, color = MaterialTheme.colorScheme.error)
             },
             dismissButton = { TextAction("Cancel", { confirmForgetVoices = false }) },
+        )
+    }
+}
+
+/**
+ * "Detect each call's language", shown with two or more languages downloaded: the switch, and while it's on and its
+ * model isn't in yet, the model's download.
+ */
+@Composable
+private fun DetectLanguage(on: Boolean, model: ModelState, vm: AppViewModel) {
+    val size = "${Math.round(Models.Set.LANGUAGE_ID.totalBytes / 1e6)}\u00A0MB"
+    val count = if (on && !model.installed) 2 else 1
+    Column(verticalArrangement = Arrangement.spacedBy(GroupGap)) {
+        GroupRow(
+            groupShape(0, count), minHeight = 72.dp,
+            action = Modifier.toggleable(value = on, role = Role.Switch, onValueChange = vm::setDetectLanguage),
+        ) {
+            RowText("Detect each call's language",
+                if (on && model.installed) "On. Each call is transcribed in the downloaded language it's in. Calls with " +
+                    "too little speech to tell are transcribed in the language chosen above."
+                else "Each call is transcribed in the downloaded language it's in. Uses a $size model, downloaded over Wi-Fi.")
+            Switch(
+                checked = on, onCheckedChange = null,
+                thumbContent = if (on) {
+                    { Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(SwitchDefaults.IconSize)) }
+                } else null,
+            )
+        }
+        if (count == 2) SettingRow(
+            "Language detection model",
+            when {
+                model.downloading -> model.downloadText
+                model.error != null -> "Download failed: ${model.error}"
+                else -> "About $size, downloaded over Wi-Fi."
+            },
+            groupShape(1, count),
+            extra = {
+                model.runningProgress?.let { ProgressLine(it, Modifier.padding(top = 10.dp, bottom = 4.dp)) }
+                // Lined up with the text above, as in the language rows.
+                Row(Modifier.offset(x = (-12).dp)) { ModelAction(model, Models.Set.LANGUAGE_ID, vm) }
+            },
         )
     }
 }

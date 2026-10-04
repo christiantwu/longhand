@@ -31,6 +31,7 @@ object Models {
     private const val LONGHAND = "https://github.com/christiantwu/longhand/releases/download/models-1"
     /** The Hindi model's files in that release, each name followed by "-encoder.int8.onnx" and so on. */
     private const val NEMOTRON = "$LONGHAND/nemotron-3.5-asr-streaming-0.6b-1120ms"
+    private const val WHISPER_BASE = "$HF/sherpa-onnx-whisper-base/resolve/bb53ee204431c90d314c1cc08d28d23e5b7927cc"
 
     /** Speaker separation and pause detection, the same whichever language is transcribed. */
     private val SPEAKER_MODELS = listOf(
@@ -44,7 +45,7 @@ object Models {
 
     /**
      * The groups the app downloads separately. Transcription needs one of the speech sets, which share
-     * the speaker models and differ in their recognizer; summaries are optional.
+     * the speaker models and differ in their recognizer; language detection and summaries are optional.
      */
     enum class Set(val files: List<ModelFile>, val recognizerDir: String? = null) {
         /**
@@ -117,6 +118,20 @@ object Models {
                     "729cc103155bafa785f9cd45746cd41cabe97eab7182fc04d594129587958f8a"),
             ) + SPEAKER_MODELS,
             recognizerDir = "nemotron",
+        ),
+
+        /**
+         * Which downloaded language each call is in ([CallLanguage]): Whisper base, multilingual, in sherpa-onnx's int8
+         * export (MIT, OpenAI). Not a speech set: wanted only with two or more languages to choose between
+         * ([languageIdWanted]).
+         */
+        LANGUAGE_ID(
+            listOf(
+                ModelFile("whisper/base-encoder.int8.onnx", "$WHISPER_BASE/base-encoder.int8.onnx", 29_120_534,
+                    "0b8fb1304b6109976038efff5ace81720e00386f3ff6b54ee8c75291ca0a1e11"),
+                ModelFile("whisper/base-decoder.int8.onnx", "$WHISPER_BASE/base-decoder.int8.onnx", 130_672_026,
+                    "9759d217388a01b3a4c7c15533201067b48ae819c4daafc8624e64b9409dc02d"),
+            ),
         ),
 
         /** Qwen 3.5 4B (Apache 2.0), Q4_0: the quantization llama.cpp runs fastest on phone CPUs. */
@@ -244,30 +259,73 @@ object Models {
     fun recognizer(context: Context, chosen: Set, previous: Set?): Set? = recognizer(chosen, previous, sizes(context))
 
     /**
-     * The language to transcribe a call in: the one [pinned] to it by hand while that's usable, else the one Settings
-     * transcribes in ([recognizer] for the [chosen] and [previous] languages); null if none is usable. A pinned language
-     * that was removed isn't forgotten: once it's downloaded again, the call uses it again.
+     * The language to transcribe a call in: the one [pinned] to it by hand while that's usable, else the one its
+     * [detection] found ([CallLanguage.languageOf]; pass it only with detection turned on) while that's usable, else the
+     * one Settings transcribes in ([recognizer] for the [chosen] and [previous] languages); null if none is usable. A
+     * pinned language that was removed isn't forgotten: once it's downloaded again, the call uses it again.
      */
-    fun languageFor(pinned: Language?, chosen: Language, previous: Language?, sizes: Sizes): Language? {
-        if (pinned != null && isInstalled(pinned.set, sizes)) return pinned
-        val set = recognizer(chosen.set, previous?.set, sizes) ?: return null
-        return Language.entries.first { it.set == set }
+    fun languageFor(
+        pinned: Language?, detection: CallLanguage.Detection?, chosen: Language, previous: Language?, sizes: Sizes,
+    ): Language? = choose(pinned, detection, chosen, previous, sizes)?.first
+
+    /**
+     * [languageFor], and whether [detection] made it other than Settings' language: only then is it worth saying, or
+     * every English call under English Settings would say "English".
+     */
+    private fun choose(
+        pinned: Language?, detection: CallLanguage.Detection?, chosen: Language, previous: Language?, sizes: Sizes,
+    ): Pair<Language, Boolean>? {
+        if (pinned != null && isInstalled(pinned.set, sizes)) return pinned to false
+        val settings = recognizer(chosen.set, previous?.set, sizes)?.let { set -> Language.entries.first { it.set == set } }
+        val detected = detection?.let(CallLanguage::languageOf)?.takeIf { isInstalled(it.set, sizes) }
+        return if (detected != null) detected to (detected != settings) else settings?.let { it to false }
     }
 
-    fun languageFor(context: Context, pinned: Language?, chosen: Language, previous: Language?): Language? =
-        languageFor(pinned, chosen, previous, sizes(context))
-
-    /** What a call is transcribed with: its [language], and the model [files] for it, to load unless they're loaded. */
-    data class EnginePick(val language: Language, val files: List<String>, val reload: Boolean)
+    /**
+     * What a call is transcribed with: its [language], and the model [files] for it, to load unless they're loaded.
+     * [detected]: detection put the call in that language instead of Settings' (not pinned by hand).
+     */
+    data class EnginePick(val language: Language, val files: List<String>, val reload: Boolean, val detected: Boolean = false)
 
     /**
      * The engine for a call ([languageFor]), and whether it must be loaded: only when the files differ from the
      * [loaded] ones, since loading takes seconds and a backlog in one language shouldn't reload for every call.
      */
-    fun engineFor(pinned: Language?, chosen: Language, previous: Language?, loaded: List<String>?, sizes: Sizes): EnginePick? {
-        val language = languageFor(pinned, chosen, previous, sizes) ?: return null
+    fun engineFor(
+        pinned: Language?, detection: CallLanguage.Detection?, chosen: Language, previous: Language?, loaded: List<String>?,
+        sizes: Sizes,
+    ): EnginePick? {
+        val (language, detected) = choose(pinned, detection, chosen, previous, sizes) ?: return null
         val files = filesInUse(language.set, sizes)
-        return EnginePick(language, files, files != loaded)
+        return EnginePick(language, files, files != loaded, detected)
+    }
+
+    /**
+     * Language detection is wanted: turned on in Settings ([detect]), with two or more languages downloaded to choose
+     * between. Then its model downloads over Wi-Fi like the others; otherwise it's deleted.
+     */
+    fun languageIdWanted(detect: Boolean, sizes: Sizes): Boolean = detect && usableLanguages(sizes).size >= 2
+
+    /** Calls can have their language detected now: it's [languageIdWanted] and its model is in place. */
+    fun canDetect(detect: Boolean, sizes: Sizes): Boolean = languageIdWanted(detect, sizes) && isInstalled(Set.LANGUAGE_ID, sizes)
+
+    fun canDetect(context: Context, detect: Boolean): Boolean = canDetect(detect, sizes(context))
+
+    /**
+     * A call to detect the language of before it's transcribed: detection [canDetect], and the call isn't [pinned] to a
+     * language by hand or [detected] already. Detection runs once per call; what it found is decided on afresh at each
+     * transcription ([languageFor]), since the languages downloaded and Settings can change.
+     */
+    fun needsDetection(pinned: Language?, detected: Boolean, detect: Boolean, sizes: Sizes): Boolean =
+        pinned == null && !detected && canDetect(detect, sizes)
+
+    /** The language detection model's files on disk, finished or partly downloaded: what goes when it isn't wanted. */
+    fun languageIdPaths(sizes: Sizes): List<String> =
+        Set.LANGUAGE_ID.files.flatMap { listOf(it.path, "${it.path}.part") }.filter { sizes.of(it) > 0 }
+
+    /** Deletes [languageIdPaths]. Call it holding [recognizerLock], which detection holds while it uses the model. */
+    fun removeLanguageId(context: Context) {
+        languageIdPaths(sizes(context)).forEach { file(context, it).delete() }
     }
 
     /** The languages calls can be transcribed in now, in the order Settings lists them. */
@@ -317,8 +375,8 @@ object Models {
     }
 
     /**
-     * Held while a recognizer is chosen and loaded, and while one is deleted, so a model can't
-     * disappear halfway through loading (the native loader would abort the app).
+     * Held while a recognizer is chosen and loaded, while the language detection model is loaded and used, and while
+     * either is deleted, so a model can't disappear halfway through loading (the native loader would abort the app).
      */
     val recognizerLock = Mutex()
 

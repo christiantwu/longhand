@@ -235,6 +235,15 @@
   },
   {
     "group": "models",
+    "name": "Whisper base",
+    "version": "int8",
+    "license": "MIT",
+    "copyright": "Copyright (c) 2022 OpenAI. Converted to ONNX by the sherpa-onnx project. Used only to detect which language a call is in, and downloaded from Hugging Face (huggingface.co/csukuangfj/sherpa-onnx-whisper-base) only when \"Detect each call's language\" is on and two or more languages are downloaded.",
+    "source": "https://github.com/openai/whisper",
+    "file": ""
+  },
+  {
+    "group": "models",
     "name": "Qwen3.5 4B",
     "version": "Q4_0",
     "license": "Apache-2.0",

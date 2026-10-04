@@ -27,6 +27,11 @@ data class AppSettings(
     val previousLanguage: Models.Language? = null,
     /** A language was ever chosen (or preselected at setup); until then [language] is only the default. */
     val languageChosen: Boolean = false,
+    /**
+     * With two or more languages downloaded, transcribe each call in the one it's in (Models.languageFor); calls with
+     * too little speech to tell, and any before the detection model is downloaded, follow [language].
+     */
+    val detectLanguage: Boolean = true,
     /** Suggest the names of people the user has named when their voice is heard in another call. */
     val recogniseVoices: Boolean = false,
     /** The transcript's tip about long-pressing a line was dismissed, or a line's menu was opened. */
@@ -46,6 +51,7 @@ class Settings(private val context: Context) {
         val previousLanguage = stringPreferencesKey("previous_language")
         /** 0.6.0, before the third language: true meant the 25 European languages. */
         val multilingual = booleanPreferencesKey("multilingual")
+        val detectLanguage = booleanPreferencesKey("detect_language")
         val recogniseVoices = booleanPreferencesKey("recognise_voices")
         val editTipSeen = booleanPreferencesKey("edit_tip_seen")
     }
@@ -70,6 +76,7 @@ class Settings(private val context: Context) {
             if (previous != null) it[Keys.previousLanguage] = previous.name
         }
     }
+    suspend fun setDetectLanguage(v: Boolean) = set(Keys.detectLanguage, v)
     suspend fun setRecogniseVoices(v: Boolean) = set(Keys.recogniseVoices, v)
     suspend fun setEditTipSeen(v: Boolean) = set(Keys.editTipSeen, v)
 
@@ -84,6 +91,7 @@ class Settings(private val context: Context) {
                 ?: if (p[Keys.multilingual] == true) Models.Language.EUROPEAN else Models.Language.ENGLISH,
             languageChosen = p[Keys.language] != null || p[Keys.multilingual] != null,
             previousLanguage = Models.Language.entries.firstOrNull { it.name == p[Keys.previousLanguage] },
+            detectLanguage = p[Keys.detectLanguage] ?: true,
             recogniseVoices = p[Keys.recogniseVoices] ?: false,
             editTipSeen = p[Keys.editTipSeen] ?: false,
         )

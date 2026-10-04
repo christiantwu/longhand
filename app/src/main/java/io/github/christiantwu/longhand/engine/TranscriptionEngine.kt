@@ -13,10 +13,7 @@ import com.k2fsa.sherpa.onnx.OfflineSpeakerDiarizationConfig
 import com.k2fsa.sherpa.onnx.OfflineSpeakerSegmentationModelConfig
 import com.k2fsa.sherpa.onnx.OfflineSpeakerSegmentationPyannoteModelConfig
 import com.k2fsa.sherpa.onnx.OfflineTransducerModelConfig
-import com.k2fsa.sherpa.onnx.SileroVadModelConfig
 import com.k2fsa.sherpa.onnx.SpeakerEmbeddingExtractorConfig
-import com.k2fsa.sherpa.onnx.Vad
-import com.k2fsa.sherpa.onnx.VadModelConfig
 import io.github.christiantwu.longhand.TAG
 import java.io.Closeable
 import java.util.concurrent.CancellationException
@@ -209,7 +206,7 @@ class TranscriptionEngine(context: Context, speech: Models.Set) : Closeable {
      */
     private fun speechSpans(samples: FloatArray, from: Int, to: Int, speaker: Int): List<Span> =
         speechRanges(samples, from, to).map { (a, b) ->
-            Span(maxOf(a - PAD_BEFORE, from) / SR, minOf(b + PAD_AFTER, to) / SR, speaker)
+            Span(maxOf(a - SpeechRanges.PAD_BEFORE, from) / SR, minOf(b + SpeechRanges.PAD_AFTER, to) / SR, speaker)
         }
 
     /** A turn as-is, or cut in the middle of pauses when it is longer than [MAX_PIECE_SEC]. */
@@ -243,45 +240,8 @@ class TranscriptionEngine(context: Context, speech: Models.Set) : Closeable {
     }
 
     /** Speech regions within samples[from, to), as absolute sample ranges. */
-    private fun speechRanges(samples: FloatArray, from: Int, to: Int): List<Pair<Int, Int>> {
-        val vad = Vad(
-            assetManager = null,
-            config = VadModelConfig(
-                sileroVadModelConfig = SileroVadModelConfig(
-                    model = vadModel,
-                    threshold = 0.5f,
-                    minSilenceDuration = 0.3f,
-                    minSpeechDuration = 0.25f,
-                    windowSize = VAD_WINDOW,
-                    // Only used to find pauses; long speech is split by splitTurn, not here.
-                    maxSpeechDuration = 120f,
-                ),
-                sampleRate = MODEL_SAMPLE_RATE,
-                numThreads = 1,
-            ),
-        )
-        try {
-            val out = ArrayList<Pair<Int, Int>>()
-            fun drain() {
-                while (!vad.empty()) {
-                    val seg = vad.front()
-                    out += (from + seg.start) to (from + seg.start + seg.samples.size)
-                    vad.pop()
-                }
-            }
-            var i = from
-            while (i + VAD_WINDOW <= to) {
-                vad.acceptWaveform(samples.copyOfRange(i, i + VAD_WINDOW))
-                drain()
-                i += VAD_WINDOW
-            }
-            vad.flush()
-            drain()
-            return out
-        } finally {
-            vad.release()
-        }
-    }
+    private fun speechRanges(samples: FloatArray, from: Int, to: Int): List<Pair<Int, Int>> =
+        SpeechRanges.find(vadModel, samples, from, to)
 
     override fun close() {
         recognizer?.release()
@@ -294,11 +254,8 @@ class TranscriptionEngine(context: Context, speech: Models.Set) : Closeable {
         /** Diarization's clustering threshold: larger merges more; see SpeakerResolver for the rest. */
         const val CLUSTER_THRESHOLD = 0.8f
         const val SR = MODEL_SAMPLE_RATE.toFloat()
-        const val VAD_WINDOW = 512
         const val MAX_PIECE_SEC = 25f
         const val MIN_PIECE_SAMPLES = MODEL_SAMPLE_RATE / 5 // 200 ms
-        const val PAD_BEFORE = MODEL_SAMPLE_RATE / 5 // 200 ms
-        const val PAD_AFTER = MODEL_SAMPLE_RATE / 10 // 100 ms
     }
 }
 

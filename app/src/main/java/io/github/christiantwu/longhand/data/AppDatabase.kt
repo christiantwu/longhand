@@ -12,7 +12,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         Recording::class, Segment::class, SpeakerName::class, SpeakerVoice::class,
         KnownVoice::class, VoiceSample::class, VoiceRejection::class, Correction::class,
     ],
-    version = 5,
+    version = 6,
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun recordings(): RecordingDao
@@ -24,7 +24,7 @@ abstract class AppDatabase : RoomDatabase() {
 
         fun get(context: Context): AppDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, "transcripts.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
                 .build().also { instance = it }
         }
 
@@ -101,6 +101,18 @@ abstract class AppDatabase : RoomDatabase() {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE `recordings` ADD COLUMN `language` TEXT")
                 db.execSQL("ALTER TABLE `recordings` ADD COLUMN `pinnedLanguage` TEXT")
+            }
+        }
+
+        /**
+         * 6 (0.10.0): detecting each call's language. The languages heard in a call and how much speech it has, once
+         * detected, and whether its transcript's language came from that. No call has been detected yet.
+         */
+        val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `recordings` ADD COLUMN `spokenLanguages` TEXT")
+                db.execSQL("ALTER TABLE `recordings` ADD COLUMN `speechSeconds` REAL")
+                db.execSQL("ALTER TABLE `recordings` ADD COLUMN `languageDetected` INTEGER NOT NULL DEFAULT 0")
             }
         }
     }

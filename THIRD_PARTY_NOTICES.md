@@ -164,6 +164,7 @@ their own licences:
 | pyannote segmentation 3.0 | MIT | [pyannote/segmentation-3.0](https://huggingface.co/pyannote/segmentation-3.0) |
 | NVIDIA NeMo TitaNet-S | Apache-2.0 (NeMo toolkit licence) | [NGC titanet_small](https://catalog.ngc.nvidia.com/orgs/nvidia/teams/nemo/models/titanet_small) |
 | Silero VAD | MIT | [snakers4/silero-vad](https://github.com/snakers4/silero-vad) |
+| OpenAI Whisper base (int8 ONNX conversion by sherpa-onnx, [csukuangfj/sherpa-onnx-whisper-base](https://huggingface.co/csukuangfj/sherpa-onnx-whisper-base); only to detect each call's language, with "Detect each call's language" on and two or more languages downloaded) | MIT | [openai/whisper](https://github.com/openai/whisper) |
 | Qwen3.5 4B, Q4_0 GGUF by Unsloth | Apache-2.0 | [Qwen/Qwen3.5-4B](https://huggingface.co/Qwen/Qwen3.5-4B) |
 
 **Parakeet TDT 0.6B v2 and v3 are modified.** Their encoders were re-quantized to int8 by Longhand from

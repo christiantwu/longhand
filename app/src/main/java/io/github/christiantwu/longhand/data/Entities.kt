@@ -5,6 +5,7 @@ import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import io.github.christiantwu.longhand.engine.CallLanguage
 import io.github.christiantwu.longhand.engine.Corrections
 import io.github.christiantwu.longhand.engine.Models
 
@@ -70,7 +71,20 @@ data class Recording(
      * it's on the phone, and the language chosen in Settings otherwise. Null: the call follows Settings.
      */
     val pinnedLanguage: Models.Language? = null,
+    /**
+     * The language detected in each window of the call's speech (Whisper's codes, comma-separated, e.g. "en,ja,ja"; empty
+     * when it has too little speech to tell, or while detection runs, so a crash in it isn't retried); null until it's
+     * been detected. See [detection].
+     */
+    val spokenLanguages: String? = null,
+    /** How much speech detection found in the call, in seconds; null until it's been detected. */
+    val speechSeconds: Float? = null,
+    /** Detection put the transcript in [language] instead of Settings' language (not chosen by hand). */
+    @ColumnInfo(defaultValue = "0") val languageDetected: Boolean = false,
 )
+
+/** What language detection found in the call; null until it's been detected. */
+val Recording.detection: CallLanguage.Detection? get() = CallLanguage.Detection.of(spokenLanguages, speechSeconds)
 
 /** Versions of the transcription pipeline. Transcripts made by an older one are redone on the charger. */
 object Pipeline {

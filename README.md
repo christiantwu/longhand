@@ -35,7 +35,8 @@ and no server, and nothing is uploaded.
 - **Search and share.** Search by name, topic or words. Share a transcript as text or
   Markdown, or share the recording itself.
 - **Languages:** English, 25 European languages, Chinese, Japanese and Korean, or Hindi (with
-  English, including calls that mix the two).
+  English, including calls that mix the two). Keep two or more, and each call is transcribed in
+  the one it's in.
 
 ## Privacy
 
@@ -59,7 +60,8 @@ and no server, and nothing is uploaded.
   but that's untested.
 - A 64-bit ARM phone.
 - Storage for the models: 0.3–0.75 GB for transcription, 0.24–0.69 GB more for each further
-  language you keep, plus 2.6 GB for summaries.
+  language you keep (and 0.16 GB to detect each call's language once you keep two), plus 2.6 GB
+  for summaries.
 - For the best accuracy, record calls as WAV: in the Phone app's settings, turn on
   "Use call recording V2 (experimental)", then choose WAV as the recording format.
   Compressed recordings are transcribed noticeably less accurately.
@@ -90,6 +92,8 @@ summaries can contain mistakes, so check anything important against the recordin
   used before keeps transcribing.
 - **Who spoke when:** pyannote segmentation 3.0 + NeMo TitaNet speaker embeddings
 - **Pause detection:** Silero VAD
+- **Language detection:** OpenAI Whisper base (int8, sherpa-onnx's conversion, MIT), only with two
+  or more languages downloaded
 - **Speech runtime:** [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) 1.13.8 (ONNX Runtime, CPU)
 - **Summaries:** Qwen 3.5 4B (Q4_0 GGUF, Apache 2.0) run by
   [llama.cpp](https://github.com/ggml-org/llama.cpp) b11308, compiled into the app
@@ -100,7 +104,9 @@ Korean, or ~730 MB for Hindi, the speaker models included; required) and the sum
 (~2.6 GB, optional). Choosing another language later in Settings downloads its recognizer
 (240–690 MB) while the one used before keeps transcribing, and both stay: switching to a language
 already downloaded is instant, and **Remove** next to it in Settings frees its space. A download
-left unfinished when you choose another language is deleted. Downloads wait for Wi-Fi (an
+left unfinished when you choose another language is deleted. Once a second language is in, the
+language detection model (~160 MB) follows, unless **Detect each call's language** is off; it's
+deleted when you turn that off or keep only one language. Downloads wait for Wi-Fi (an
 unmetered connection) unless you choose to go ahead on mobile data or a metered network. Summaries follow an English
 prompt, so a call in another language may still get its summary in English. After that you can
 turn off the app's Network permission in GrapheneOS.
@@ -153,9 +159,38 @@ tests of the model, recognition took about 1.8 times as long as the European lan
    is ready, and redos don't send a notification.
    Each recording is transcribed in the language chosen in Settings, or, while that one downloads,
    in the one used before (`Models.recognizer`), so a switch to a language already on the phone
-   takes effect from the next recording. With more than one language on the phone, **⋮ → Transcribe
-   again** asks which to use for that call. A language other than the one in Settings stays with the
-   call for its later transcriptions too, as long as it's on the phone (`Models.languageFor`).
+   takes effect from the next recording.
+   - **Detecting each call's language** (with two or more languages on the phone; on by default,
+     under Settings → Transcription language): each call is transcribed in the downloaded language
+     it's in (`engine/CallLanguage.kt`). Silero VAD, set up as for transcription, finds the call's
+     speech, which is cut into 9 s pieces (a last piece of 4 s or more is kept), and Whisper base
+     names the language of the first, middle and last piece (of each, with three or fewer). A call
+     goes to another model when two of those windows (or the only one) are in its languages, or when
+     one is and the rest are English, as in a call that mixes Hindi and English; it stays when more
+     than one window is in a language no model covers, or when two other models' languages are
+     heard, unless it's two windows to one. When every window is English, the call goes to the
+     English model, the most accurate for English, though every other model transcribes English
+     too. A call with under 10 s of speech follows Settings, and so does one in a language that isn't
+     downloaded. Whisper hears Maltese as Arabic, so a Maltese call stays with Settings' language
+     too. The windows and the rule were chosen on 1,064 test calls coded like the Phone app's
+     recordings, to move a call only when that's all but certain to transcribe it better.
+     Each call is detected once (and again if its file changes); one that crashes the app while
+     it's detected follows Settings instead of being detected again. What was heard is kept, and the
+     language is decided afresh whenever the call is transcribed, since the languages downloaded and
+     Settings can change. Calls that arrive before the detection model has downloaded follow
+     Settings without waiting. Whisper and a recognizer are never in memory together: when a call
+     needs detecting, the recognizer is unloaded, up to 8 waiting calls are detected in one go (so
+     a call you ask for meanwhile isn't kept waiting behind a long backlog), and Whisper is
+     released before transcription carries on. A transcript that detection put in another language
+     than Settings' says which language was heard in its header, like "JAPANESE".
+   - **Transcribe again:** with more than one language on the phone, **⋮ → Transcribe again** asks
+     which to use for that call. The language picked stays with the call for its later
+     transcriptions too, as long as it's on the phone (`Models.languageFor`); picking the one the
+     call would get anyway lets it follow Settings again. Once the detection model is downloaded
+     (with detection on), the list starts with **Automatic**, which says what was heard in the
+     call: it lets detection choose again, and any language picked, Settings' too, keeps the call in
+     that language.
+
    It runs as a foreground job with a progress notification, in two phases so the two model
    sets are never in memory together:
    1. **Transcribe** each pending recording (`TranscriptionEngine`):
@@ -355,6 +390,9 @@ The local `models/` directory mirrors the layout in `engine/Models.kt`:
   (the files of sherpa-onnx's `sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-1120ms-int8-2026-06-11`
   archive; then choose "Hindi")
 - `segmentation.onnx`, `embedding.onnx` and `silero_vad.onnx`
+- `whisper/base-{encoder,decoder}.int8.onnx` to detect each call's language (the files of
+  [csukuangfj/sherpa-onnx-whisper-base](https://huggingface.co/csukuangfj/sherpa-onnx-whisper-base)
+  of the same names)
 - `llm/qwen3.5-4b-q4_0.gguf` for summaries
 
 Release builds can't use `run-as`; they download the models in the app.

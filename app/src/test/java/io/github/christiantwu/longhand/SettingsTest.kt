@@ -32,4 +32,10 @@ class SettingsTest {
         assertFalse(Settings.from(emptyPreferences()).editTipSeen)
         assertTrue(Settings.from(preferencesOf(booleanPreferencesKey("edit_tip_seen") to true)).editTipSeen)
     }
+
+    @Test fun eachCallsLanguageIsDetectedUntilTurnedOff() {
+        assertTrue(AppSettings().detectLanguage)
+        assertTrue(Settings.from(emptyPreferences()).detectLanguage)
+        assertFalse(Settings.from(preferencesOf(booleanPreferencesKey("detect_language") to false)).detectLanguage)
+    }
 }
