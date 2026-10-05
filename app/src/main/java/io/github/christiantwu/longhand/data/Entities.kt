@@ -128,7 +128,10 @@ data class Segment(
      * wrote the words; null when they weren't kept (transcripts made before 0.9.0).
      */
     val words: String? = null,
-    /** What the recogniser wrote, before common corrections or a hand edit; null when it's [text]. */
+    /**
+     * What the recogniser wrote (in English, with its numbers in digits), before common corrections or a hand edit; null
+     * when it's [text].
+     */
     val recognized: String? = null,
     /** The text was typed by hand, so common corrections leave it alone. */
     @ColumnInfo(defaultValue = "0") val edited: Boolean = false,

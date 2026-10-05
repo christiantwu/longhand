@@ -76,6 +76,22 @@ and no server, and nothing is uploaded.
   hour; with **Shrink WAV recordings after transcription** (Settings → Storage), each one is
   replaced by a copy of about 7 MB an hour once it's transcribed (see "How it works").
 
+## Battery
+
+Longhand only works after a call: with the Phone permission it never starts during one, and it
+begins about a minute after you hang up, or, with **Only while charging** (Settings → Processing),
+at the first folder check after you plug in, within about 15 minutes. On battery it takes only the
+last day's calls; older recordings wait for the charger unless you tap **Transcribe now**, and
+redoing transcripts after an update always waits for it. It handles one recording at a time on the
+processor, not the GPU or NPU, with at most four threads busy: four to find speakers, recognise
+speech and write the summary, and two or fewer for smaller steps such as language detection. In
+desktop tests a minute of call took about 6–9 seconds to transcribe, and a summary about 20
+seconds plus 3 seconds per minute of call; phones are roughly 3–5 times slower, so a 10-minute call
+takes very roughly 3–8 minutes to transcribe and 3–4 more to summarize. Between calls it does almost
+nothing except check the folder every 15 minutes. If that's more than you want on battery, **Only
+while charging** moves all of it to the charger, apart from a few seconds of re-learning voices
+right after you move lines between speakers or confirm your own voice.
+
 ## Install
 
 Download `longhand-<version>.apk` from the
@@ -138,6 +154,19 @@ keep transcribing with the old encoder while the new one (~670 MB) downloads ove
 old one is deleted once the new one is in and checked. A language kept on the phone but not chosen
 gets its new encoder when you choose it again. If you turned off the Network permission, turn it
 back on for the update.
+
+**The English model's transcripts have spoken numbers written as digits,** US style
+(`engine/SpokenNumbers.kt`). Parakeet v2 writes many numbers as words, especially digits read out
+one by one and amounts, so Longhand rewrites them: "three hundred and eighty dollars" becomes
+\$380, "one thousand three hundred and seventy eight dollars" \$1,378, "twenty five percent" 25%,
+"nine thirty a.m." 9:30 a.m., and ten digits read out one by one a phone number with dashes, like
+202-555-0143. Where digits would be odd, the words stay: zero to nine on their own ("I need two"),
+"one of them", "the first time", "two or three weeks", "a thousand times". On held-out recorded
+phone conversations, 95% of the numbers it wrote were right and it wrote 91% of those it should
+have; NeMo's inverse text normalization got 68% and 63%. Each number keeps the timing of the words
+it was written from, so splitting a line still works. The other models write numbers their own way
+(SenseVoice as digits). English transcripts made by an earlier version keep their words until
+transcribed again.
 
 **The Hindi model comes from Longhand's release too, unmodified.** sherpa-onnx publishes its int8
 conversion of Nemotron 3.5 ASR Streaming only inside one archive, so Longhand hosts the encoder,
@@ -244,7 +273,11 @@ tests of the model, recognition took about 1.8 times as long as the European lan
          detects the language of each piece; a piece it writes in a script other than Devanagari or
          Latin (some short ones come out in Cyrillic) is decoded again as Hindi. When each word was
          said is kept too (from sherpa-onnx's token times, and Parakeet's token durations), so a line
-         can later be split between two words.
+         can later be split between two words. English lines then have their numbers written as
+         digits (`SpokenNumbers`, see "Models"), each taking the time of the words it replaces;
+         that text is what common corrections start from and what's kept as the recogniser's.
+         So in English a rule matches the digits Longhand writes: one written for spoken number
+         words ("nine one one") needs adding again as digits ("911") for new transcripts.
       7. Apply common corrections (Settings → Corrections), such as "UV" → "Youvee"
          (`engine/Corrections.kt`): whole words or phrases, in any case, longest phrase first, in
          one pass. Chinese and Japanese, written without spaces, match anywhere. Whole words can't

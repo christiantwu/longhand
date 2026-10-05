@@ -12,7 +12,10 @@ data class WordTime(val startMs: Long, val endMs: Long) {
     fun shift(ms: Long) = WordTime((startMs + ms).coerceAtLeast(0), (endMs + ms).coerceAtLeast(0))
 }
 
-/** One piece's text as the recogniser wrote it (cleaned up), with when each of its [Words] was said, if known. */
+/**
+ * One piece's text as the recogniser wrote it (cleaned up, and in English with its numbers in digits: [SpokenNumbers]),
+ * with when each of its [Words] was said, if known.
+ */
 class Recognized(val text: String, val words: List<WordTime>?)
 
 /**

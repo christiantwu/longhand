@@ -17,7 +17,7 @@ class TranscriptResult(val lines: List<TranscriptLine>, val voices: Map<Int, Flo
 
 /**
  * Turns decoded audio and who spoke when in it ([SpeakerSeparation]) into speaker-labelled, timestamped lines:
- * split long turns at pauses -> recognize each piece.
+ * split long turns at pauses -> recognize each piece -> in English, write its numbers as digits.
  * [speech] picks the recognizer: English (Parakeet v2) or 25 European languages (v3), both NeMo
  * transducers that sherpa-onnx loads the same way, or Chinese, Japanese and Korean (SenseVoice Small),
  * all run by sherpa-onnx's offline recognizer; or Hindi (Nemotron 3.5 ASR Streaming), a streaming
@@ -34,6 +34,9 @@ class TranscriptionEngine(context: Context, speech: Models.Set) : Closeable {
 
     private val vadModel = Models.file(context, "silero_vad.onnx").absolutePath
     private val threads = 4
+
+    /** Parakeet v2 writes many numbers as words; the other models write them as digits themselves, or aren't English. */
+    private val spokenNumbers = speech == Models.Set.SPEECH
 
     /** Hindi's recognizer; the other languages use [recognizer]. */
     private val streaming = if (speech == Models.Set.HINDI) StreamingRecognizer(context, speech, threads) else null
@@ -131,7 +134,11 @@ class TranscriptionEngine(context: Context, speech: Models.Set) : Closeable {
         return SegmentLogic.splitAtPauses(turn.start, turn.end, pauses, MAX_PIECE_SEC)
     }
 
-    /** The piece's text, with when each word was said (from the tokens' times, and their durations for Parakeet). */
+    /**
+     * The piece's text, with when each word was said (from the tokens' times, and their durations for Parakeet). In
+     * English, its numbers are then written as digits ([SpokenNumbers]); the timings are worked out before that, as
+     * they must match the tokens' text, and follow the words into digits.
+     */
     private fun recognize(samples: FloatArray): Recognized {
         val recognizer = checkNotNull(recognizer)
         val stream = recognizer.createStream()
@@ -147,7 +154,15 @@ class TranscriptionEngine(context: Context, speech: Models.Set) : Closeable {
                 Log.w(TAG, "no word timings: ${e.message}")
                 null
             }
-            return Recognized(text, words)
+            val recognized = Recognized(text, words)
+            if (!spokenNumbers) return recognized
+            return try {
+                SpokenNumbers.write(recognized)
+            } catch (e: Exception) {
+                // Digits are a nicety: a line the converter trips on keeps its words rather than costing the transcript.
+                Log.w(TAG, "numbers left as words: ${e.javaClass.simpleName}")
+                recognized
+            }
         } finally {
             stream.release()
         }
