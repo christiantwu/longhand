@@ -164,11 +164,13 @@ class VoiceAnalyzer(context: Context, threads: Int = 2) : Closeable {
             if (to > from) samples.copyOfRange(from, to) else null
         }
         if (pieces.isEmpty()) return null
-        val joined = FloatArray(pieces.sumOf { it.size })
-        var pos = 0
-        for (p in pieces) {
-            p.copyInto(joined, pos)
-            pos += p.size
+        // One piece (a window splitting turns by voice, say) is already a copy of its own.
+        val joined = pieces.singleOrNull() ?: FloatArray(pieces.sumOf { it.size }).also { all ->
+            var pos = 0
+            for (p in pieces) {
+                p.copyInto(all, pos)
+                pos += p.size
+            }
         }
         val stream = extractor.createStream()
         try {

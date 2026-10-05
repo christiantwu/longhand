@@ -85,9 +85,9 @@ android {
     }
 }
 
-// SpeakerResolverParityTest reads fixtures that tools/diarization_eval.py writes from local sample
-// calls, and MigrationTest the exported Room schemas; declared as inputs so changes to them re-run
-// the tests instead of reusing a cached result.
+// SpeakerResolverParityTest and VoiceSplitParityTest read fixtures that tools/diarization_eval.py
+// writes from local sample calls, and MigrationTest the exported Room schemas; declared as inputs so
+// changes to them re-run the tests instead of reusing a cached result.
 tasks.withType<Test>().configureEach {
     inputs.files(rootProject.fileTree("sample_recordings/.cache/fixtures") { include("*.txt") })
         .withPropertyName("speakerParityFixtures")

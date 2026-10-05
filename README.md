@@ -210,17 +210,25 @@ tests of the model, recognition took about 1.8 times as long as the European lan
          linear interpolation left images above 4 kHz that hid speaker changes.
       2. Diarize (who spoke when), deliberately split too finely (`SpeakerResolver`), unless it
          was done while detecting the call's language. Clusters with enough clean speech get a
-         voice fingerprint, and those that sound alike merge into one person. A short cluster
-         joins the closest voice, or becomes a speaker of its own when it sounds unlike everyone.
-         Fragments too short to fingerprint go to the voice around them. The number of people
-         isn't fixed, so a transferred call can have three. Speakers are numbered in the order
-         they first speak.
+         voice fingerprint, and those that sound alike (scoring 0.64 or more against each other,
+         on average) merge into one person. A short cluster joins the closest voice, or becomes a
+         speaker of its own when it sounds unlike everyone. Fragments too short to fingerprint go
+         to the voice around them. The number of people isn't fixed, so a transferred call can
+         have three.
       3. Merge each person's consecutive speech into one turn, then make the turns not overlap,
          so every moment is recognised once: a turn of 1.5 s or less said over someone else's
          (a "yeah") is left to the surrounding turn, a longer one cuts the turn around it in two,
          and turns that partly overlap meet in the middle.
-      4. Cut turns longer than 25 s in the middle of pauses, keeping all the audio.
-      5. Recognise the text. Parakeet and SenseVoice run in sherpa-onnx's offline recognizer, one
+      4. Split long turns where someone else's voice takes over (`VoiceSplit`): diarization
+         sometimes runs two people's speech into one turn. Each turn of 3 s or more is
+         fingerprinted again in 1.5 s windows, one every 0.75 s, and each window is scored against
+         every speaker's voice. Every quarter second of the turn goes to another speaker if the
+         windows over it score them at least 0.10 higher than the turn's own, as long as a second
+         or more in a row does; the turn is cut there. Speakers are then numbered in the order
+         they first speak. Splitting takes the last 15% of the progress shown for finding
+         speakers.
+      5. Cut turns longer than 25 s in the middle of pauses, keeping all the audio.
+      6. Recognise the text. Parakeet and SenseVoice run in sherpa-onnx's offline recognizer, one
          piece at a time. Hindi's Nemotron is a streaming model, run in its online recognizer
          (`StreamingRecognizer`): each piece goes in whole, after 0.3 s of silence (without it the
          first word is often lost) and with 1.5 s of silence after it to flush the last chunk
@@ -233,7 +241,7 @@ tests of the model, recognition took about 1.8 times as long as the European lan
          Latin (some short ones come out in Cyrillic) is decoded again as Hindi. When each word was
          said is kept too (from sherpa-onnx's token times, and Parakeet's token durations), so a line
          can later be split between two words.
-      6. Apply common corrections (Settings → Corrections), such as "UV" → "Youvee"
+      7. Apply common corrections (Settings → Corrections), such as "UV" → "Youvee"
          (`engine/Corrections.kt`): whole words or phrases, in any case, longest phrase first, in
          one pass. Chinese and Japanese, written without spaces, match anywhere. Whole words can't
          tell meanings apart, so a rule for "UV" changes "UV index" too. The rules are read in the
@@ -365,20 +373,31 @@ the facts of the call.
 
 ### Tuning speaker separation
 
-`tools/diarization_eval.py` replays speaker separation on desktop: the same models, resampler
-and `SpeakerResolver` rules as the app. It scores the result against reference labels of who
-said what. It needs ffmpeg, numpy and sherpa-onnx 1.13.8. Recordings and labels go in
-`sample_recordings/`, which git ignores; real calls never belong in the repository.
+`tools/diarization_eval.py` replays speaker separation on desktop: the same models, resampler,
+`SpeakerResolver` rules and splitting by voice (`VoiceSplit`) as the app. It scores the result
+against reference labels of who said what. It needs ffmpeg, numpy and sherpa-onnx 1.13.8.
+Recordings and labels go in `sample_recordings/`, which git ignores; real calls never belong in
+the repository.
 
 The thresholds in `SpeakerResolver` were tuned on three real calls (two people, and two
 transferred calls with three). Each was also scored cut off before the transfer, to give
 two-person cases. The old pipeline put 58% of the labelled speech on the wrong speaker in the
-worst call; the current one gets 94–96% right in each (scored so that each moment counts for
-one speaker only), with the right number of people. A fourth labelled call, in which one
-person's voice changes partway through, comes out 85% right: after the change, part of their
-speech goes to the owner.
-`--fixtures` writes the harness's inputs and decisions for `SpeakerResolverParityTest`, which
-checks that the Kotlin code decides the same way.
+worst call. The current one, scored so that each moment counts for one speaker only, gets 96.1%
+right in the two-person call, 95.2% and 95.6% in the transferred calls, and 97.9% and 93.7% in
+them cut off before the transfer, each with the right number of people. A fourth labelled call,
+in which one person's voice changes partway through, comes out 85.8% right, with three speakers
+for its two people: the changed voice is a speaker of its own, which **Same person as…** joins
+up by hand. Speakers merge from 0.64 rather than 0.62 for that: at 0.62 the changed voice
+went to the owner instead, putting someone else's words under "You" (86.4% right, with two
+speakers). No other call changes between the two.
+
+Splitting turns by voice raised the first transferred call from 93.8% to 95.2% (95.6% to 97.9%
+cut off) and the changed-voice call from 83.4% to 85.8%, and left the others' scores as they
+were. A 1.5 s window takes about 10 ms to fingerprint on a desktop CPU, so splitting adds
+roughly 1–4 minutes per hour of call on a phone.
+
+`--fixtures` writes the harness's inputs and decisions for `SpeakerResolverParityTest` and
+`VoiceSplitParityTest`, which check that the Kotlin code decides the same way.
 
 ## Design
 

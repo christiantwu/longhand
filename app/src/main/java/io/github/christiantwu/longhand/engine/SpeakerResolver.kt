@@ -13,7 +13,9 @@ package io.github.christiantwu.longhand.engine
  * - **Anchors**: clusters with enough of it ([Config.anchorSeconds]) get a voice fingerprint and
  *   can become speakers. Speakers whose anchors match on average are merged (average linkage).
  *   On sample calls, one person's anchors scored 0.72 or more against each other and different
- *   people's 0.53 or less, so [Config.mergeAt] sits between the two.
+ *   people's 0.53 or less, so [Config.mergeAt] sits between the two. At 0.64 rather than 0.62, a
+ *   person whose voice changes partway through a call keeps the changed voice as a speaker of its
+ *   own, instead of it going to the owner; no other sample call changed.
  * - **Probes**: shorter clusters get a fingerprint too, mostly just to place them with the closest
  *   speaker. They never merge with each other, so a fragment that sounds halfway between two
  *   people can't join them together. One becomes a speaker of its own only when its voice is
@@ -33,7 +35,7 @@ object SpeakerResolver {
          *  placed short replies better than their timing did on sample calls. */
         val probeSeconds: Float = 0.5f,
         /** Speakers whose anchors score at least this on average merge into one. */
-        val mergeAt: Float = 0.62f,
+        val mergeAt: Float = 0.64f,
         /** A probe scoring below this against every speaker is someone else... */
         val distinctBelow: Float = 0.5f,
         /** ...if it has at least this much clean speech (seconds). */

@@ -1,6 +1,7 @@
 package io.github.christiantwu.longhand.engine
 
 import android.content.Context
+import android.os.SystemClock
 import android.util.Log
 import com.k2fsa.sherpa.onnx.FastClusteringConfig
 import com.k2fsa.sherpa.onnx.OfflineSpeakerDiarization
@@ -39,12 +40,20 @@ class Separation(
         /**
          * Turns heard on the mono mix, from who spoke when ([spans]) with each speaker's [voices]: each speaker's
          * speech joined up ([SegmentLogic.merge]), then made not to overlap ([SegmentLogic.withoutOverlaps]), as the
-         * mono mix has every voice in it and an overlap would be transcribed twice. Speakers are numbered in the order
-         * they're first heard; one left with no turns (everything they said was said over someone else) is gone, voice
-         * and all, so it can't be taken for the owner or leave a gap in the numbers.
+         * mono mix has every voice in it and an overlap would be transcribed twice, then [split] by voice
+         * ([VoiceSplit.resplit]), given the voices of the speakers who have turns. Speakers are numbered in the order
+         * they're first heard; one left with no turns (everything they said was said over someone else, or sounded
+         * like others) is gone, voice and all, so it can't be taken for the owner or leave a gap in the numbers.
          */
-        fun mono(spans: List<Span>, voices: Map<Int, FloatArray>, speech: List<Pair<Int, Int>>): Separation {
-            val turns = SegmentLogic.withoutOverlaps(SegmentLogic.merge(spans), MIN_PIECE_SEC)
+        fun mono(
+            spans: List<Span>,
+            voices: Map<Int, FloatArray>,
+            speech: List<Pair<Int, Int>>,
+            split: (List<Span>, Map<Int, FloatArray>) -> List<Span> = { turns, _ -> turns },
+        ): Separation {
+            val joined = SegmentLogic.withoutOverlaps(SegmentLogic.merge(spans), MIN_PIECE_SEC)
+            val heard = joined.mapTo(HashSet()) { it.speaker }
+            val turns = split(joined, voices.filterKeys { it in heard })
             val numbered = SegmentLogic.relabelByFirstAppearance(turns)
             val renumber = turns.zip(numbered).associate { (a, b) -> a.speaker to b.speaker }
             return Separation(
@@ -92,7 +101,8 @@ class SpeakerSeparation(context: Context) : Closeable {
     /**
      * @param owner the phone owner's voiceprint, if they've set one: keeps them a speaker of their own.
      * @param onProgress 0..[SHARE]: separating a call is that much of transcribing it.
-     * @param isStopped polled after diarization; throws [CancellationException] when true.
+     * @param isStopped polled after diarization and between the windows fingerprinted to split turns by voice; throws
+     * [CancellationException] when true.
      */
     fun separate(audio: DecodedAudio, owner: FloatArray?, onProgress: (Float) -> Unit, isStopped: () -> Boolean): Separation {
         val stereo = audio.channels.size == 2 &&
@@ -105,7 +115,7 @@ class SpeakerSeparation(context: Context) : Closeable {
     /** Who spoke when, from voice clustering over the whole call. */
     private fun monoTurns(audio: DecodedAudio, owner: FloatArray?, onProgress: (Float) -> Unit, isStopped: () -> Boolean): Separation {
         val samples = audio.mono
-        val raw = diarizer.processWithCallback(samples, DiarizationProgress(onProgress), 0L)
+        val raw = diarizer.processWithCallback(samples, DiarizationProgress(SHARE * DIARIZATION_SHARE, onProgress), 0L)
             .map { Span(it.start, it.end, it.speaker) }
         if (isStopped()) throw CancellationException()
         // Very short or single-voice clips can come back empty; fall back to plain speech detection.
@@ -121,13 +131,40 @@ class SpeakerSeparation(context: Context) : Closeable {
         // so the owner can still be recognised among them. Taken from the turns before they're made not to overlap,
         // which still show where someone else talks over a speaker (their voice would be mixed in).
         val voices = resolved.voices + voiceAnalyzer.voices(SegmentLogic.merge(resolved.spans).map { it to samples })
-        val found = Separation.mono(resolved.spans, voices,
-            // Everything diarization heard anyone say, padded as recognition pads speech: it hears quieter and noisier
-            // voices than speech detection does.
-            CallLanguage.speech(raw, samples.size, SpeechRanges.PAD_BEFORE, SpeechRanges.PAD_AFTER))
+        // Everything diarization heard anyone say, padded as recognition pads speech: it hears quieter and noisier
+        // voices than speech detection does.
+        val speech = CallLanguage.speech(raw, samples.size, SpeechRanges.PAD_BEFORE, SpeechRanges.PAD_AFTER)
+        val found = Separation.mono(resolved.spans, voices, speech) { turns, theirs ->
+            splitByVoice(samples, turns, theirs, onProgress, isStopped)
+        }
         Log.i(TAG, "speakers: ${raw.map { it.speaker }.distinct().size} clusters, " +
             "${fingerprints.size} fingerprinted, ${found.turns.map { it.span.speaker }.distinct().size} people")
         return found
+    }
+
+    /**
+     * [turns] split where another speaker's voice takes over ([VoiceSplit]), by fingerprinting each window on its own
+     * and scoring it against the speakers' [voices]: the rest of separation's progress after diarization.
+     */
+    private fun splitByVoice(
+        samples: FloatArray, turns: List<Span>, voices: Map<Int, FloatArray>, onProgress: (Float) -> Unit, isStopped: () -> Boolean,
+    ): List<Span> {
+        val speakers = voices.keys.sorted()
+        val theirs = speakers.map { voices.getValue(it) }
+        val started = SystemClock.elapsedRealtime()
+        var windows = 0
+        val split = VoiceSplit.resplit(turns, speakers, onWindow = { done, total ->
+            windows = total
+            onProgress(SHARE * (DIARIZATION_SHARE + (1 - DIARIZATION_SHARE) * done / total))
+        }) { start, end ->
+            if (isStopped()) throw CancellationException()
+            voiceAnalyzer.fingerprint(samples, listOf(start to end))?.let { v ->
+                FloatArray(theirs.size) { VoiceMath.cosine(v, theirs[it]) }
+            }
+        }
+        Log.i(TAG, "split by voice: $windows windows in ${SystemClock.elapsedRealtime() - started} ms, " +
+            "${turns.size} -> ${split.size} turns")
+        return split
     }
 
     /** Each side of the call on its own channel: the channel is the speaker. */
@@ -174,6 +211,12 @@ class SpeakerSeparation(context: Context) : Closeable {
         /** How much of transcribing a call is separating it, in progress reported: recognition is the rest. */
         const val SHARE = 0.3f
 
+        /**
+         * How much of separating a call is diarization, in progress reported: splitting turns by voice is the rest
+         * (11–18% of the time on sample calls, on desktop).
+         */
+        private const val DIARIZATION_SHARE = 0.85f
+
         /** Diarization's clustering threshold: larger merges more; see SpeakerResolver for the rest. */
         private const val CLUSTER_THRESHOLD = 0.8f
         private const val SR = MODEL_SAMPLE_RATE.toFloat()
@@ -186,9 +229,9 @@ class SpeakerSeparation(context: Context) : Closeable {
  * to a generic invokedynamic lambda) doesn't have, so this must be a real class. The
  * signature is also kept from R8 in proguard-rules.pro.
  */
-class DiarizationProgress(private val onProgress: (Float) -> Unit) : (Int, Int, Long) -> Int {
+class DiarizationProgress(private val share: Float, private val onProgress: (Float) -> Unit) : (Int, Int, Long) -> Int {
     override fun invoke(processedChunks: Int, totalChunks: Int, arg: Long): Int {
-        if (totalChunks > 0) onProgress(SpeakerSeparation.SHARE * processedChunks / totalChunks)
+        if (totalChunks > 0) onProgress(share * processedChunks / totalChunks)
         return 0
     }
 }

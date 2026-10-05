@@ -84,22 +84,35 @@ class SpeakerResolverTest {
     }
 
     @Test fun lessTypicalStretchOfAVoiceStillMerges() {
-        // A stretch of A's speech (laughing, say) that scores only 0.63 against A's other speech.
+        // A stretch of A's speech (laughing, say) that scores only 0.65 against A's other speech.
         val a = person(0)
         val b = person(1)
         val spans = turns(0, 3, 1, 3, 2, 3, 0)
-        val fp = mapOf(0 to cluster(a), 1 to cluster(a), 2 to cluster(a, toPerson = 0.7f), 3 to cluster(b))
+        val fp = mapOf(0 to cluster(a), 1 to cluster(a), 2 to cluster(a, toPerson = 0.72f), 3 to cluster(b))
         val who = speakers(spans, SpeakerResolver.resolve(spans, fp).spans)
         assertEquals(2, who.values.toSet().size)
         assertEquals(who[0], who[2])
     }
 
+    @Test fun aVoiceOnlyFairlyLikeAnotherStaysApart() {
+        // A stretch scoring 0.63 against A's speech is a speaker of its own. On a sample call, a person whose voice
+        // changed partway through scored that against the owner: a speaker too many, which "Same person as…" joins up
+        // by hand, is better than their words under the owner.
+        val a = person(0)
+        val b = person(1)
+        val spans = turns(0, 3, 1, 3, 2, 3, 0)
+        val fp = mapOf(0 to cluster(a), 1 to cluster(a), 2 to cluster(a, toPerson = 0.7f), 3 to cluster(b))
+        val who = speakers(spans, SpeakerResolver.resolve(spans, fp).spans)
+        assertEquals(3, who.values.toSet().size)
+        assertEquals(who[0], who[1])
+    }
+
     @Test fun manyStretchesOfTwoSimilarVoicesStayTwoPeople() {
-        // Each person's clusters score 0.81 against each other and 0.53 against the other person's.
-        // Averaged fingerprints would score higher as clusters pile up (0.64 with 8 each); the
-        // average score between the clusters stays 0.53.
-        val a = person(0, shared = 0.81f)
-        val b = person(1, shared = 0.81f)
+        // Each person's clusters score 0.81 against each other and 0.56 against the other person's.
+        // Averaged fingerprints would score higher as clusters pile up (0.67 with 8 each, past the
+        // 0.64 merge threshold); the average score between the clusters stays 0.56.
+        val a = person(0, shared = 0.83f)
+        val b = person(1, shared = 0.83f)
         val spans = turns(*IntArray(16) { it })
         val fp = (0 until 16).associateWith { cluster(if (it % 2 == 0) a else b) }
         val who = speakers(spans, SpeakerResolver.resolve(spans, fp).spans)

@@ -61,6 +61,30 @@ class SeparationTest {
         assertEquals(mapOf(0 to first, 1 to second), without.voices)
     }
 
+    @Test fun monoTurnsAreSplitByVoiceBeforeTheyreNumbered() {
+        val first = floatArrayOf(1f, 0f)
+        val stray = floatArrayOf(0f, 1f)
+        val second = floatArrayOf(0.6f, 0.8f)
+        val voices = mapOf(7 to first, 3 to stray, 5 to second)
+        // As above: 3 only says "mm-hmm" over 7, so has no turns of its own to split, nor a voice to split them by.
+        val spans = listOf(Span(0f, 4f, 7), Span(1f, 2f, 3), Span(3f, 10f, 7), Span(9f, 15f, 5))
+        var given: Map<Int, FloatArray> = emptyMap()
+        // 5 is heard at the start of 7's turn, and so speaks first.
+        val found = Separation.mono(spans, voices, emptyList()) { turns, theirs ->
+            given = theirs
+            assertEquals(listOf(Span(0f, 9.5f, 7), Span(9.5f, 15f, 5)), turns)
+            listOf(Span(0f, 2f, 5), Span(2f, 9.5f, 7), Span(9.5f, 15f, 5))
+        }
+        assertEquals(mapOf(7 to first, 5 to second), given)
+        assertEquals(listOf(Span(0f, 2f, 0), Span(2f, 9.5f, 1), Span(9.5f, 15f, 0)), found.turns.map { it.span })
+        assertEquals(mapOf(0 to second, 1 to first), found.voices)
+
+        // Everything 5 said sounded like 7: 5 is gone, voice and all.
+        val one = Separation.mono(spans, voices, emptyList()) { _, _ -> listOf(Span(0f, 15f, 7)) }
+        assertEquals(listOf(Span(0f, 15f, 0)), one.turns.map { it.span })
+        assertEquals(mapOf(0 to first), one.voices)
+    }
+
     @Test fun usedOnceForTheSameCallUnchangedWithTheSameVoiceprint() {
         val cache = SeparationCache(8)
         val kept = separation()

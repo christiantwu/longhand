@@ -5,9 +5,11 @@ The steps mirror the app:
   1. decode, and resample to 16 kHz the way engine/Resampler.kt does (Kaiser-windowed sinc)
   2. diarize like engine/SpeakerSeparation.kt (pyannote segmentation 3.0 + TitaNet,
      over-clustered with FastClustering threshold 0.8)
-  3. fingerprint and resolve the clusters into people like engine/SpeakerResolver.kt
+  3. fingerprint and resolve the clusters into people like engine/SpeakerResolver.kt, and keep each
+     person's voice as SpeakerSeparation does (VoiceAnalyzer.voices)
   4. merge each person's consecutive speech like SegmentLogic.merge
   5. make the turns not overlap like SegmentLogic.withoutOverlaps, as the app recognises each moment once
+  6. re-split long turns where another person's voice takes over, like engine/VoiceSplit.kt
 
 Reference labels live in <samples>/labels.json:
   {"<file>": {"people": ["P1", "P2"], "owner": "P1", "turns": [{"start": 0.3, "end": 8.3, "person": "P1"}, ...]}}
@@ -23,11 +25,13 @@ one), to catch spurious extra speakers.
 
 Steps 1-2 are cached per call in <samples>/.cache, keyed by the recording, the models, the
 sherpa-onnx version and the code of resample() and diarizer(), so --tune only redoes the cheap parts.
+--tune leaves step 6 out (it fingerprints every window of every long turn again for each setting).
 Needs ffmpeg, numpy and sherpa-onnx (the version the app uses, 1.13.8).
 
   tools/diarization_eval.py                 # score the app's current settings
   tools/diarization_eval.py --tune          # search the thresholds around them
-  tools/diarization_eval.py --fixtures      # write inputs/outputs for SpeakerResolverParityTest
+  tools/diarization_eval.py --fixtures      # write inputs/outputs for SpeakerResolverParityTest and
+                                            # VoiceSplitParityTest
 """
 import argparse
 import dataclasses
@@ -139,7 +143,7 @@ class Fingerprints:
 class Config:
     anchor_seconds: float = 8.0
     probe_seconds: float = 0.5
-    merge_at: float = 0.62
+    merge_at: float = 0.64
     distinct_below: float = 0.5
     distinct_seconds: float = 3.0
     owner_at: float = 0.5
@@ -250,8 +254,9 @@ def fragment_speaker(s, placed, speakers):
 
 
 def resolve(spans, fingerprints, owner=None, cfg=Config()):
+    """SpeakerResolver.resolve: the spans relabelled with speakers, and each speaker's voice (unit length)."""
     if not spans:
-        return spans
+        return spans, {}
     clean = {c: sum(b - a for a, b in parts) for c, parts in usable_parts(spans).items()}
     unit = {c: normalize(v) for c, v in fingerprints.items()}
 
@@ -293,11 +298,28 @@ def resolve(spans, fingerprints, owner=None, cfg=Config()):
             continue
         speaker_of[c] = max(range(len(groups)), key=lambda i: (cosine(unit[c], groups[i].mean), -i))
     if not groups:
-        return [(s, e, 0) for s, e, _ in spans]
+        return [(s, e, 0) for s, e, _ in spans], {}
 
+    members = defaultdict(list)
+    for c, k in speaker_of.items():
+        members[k].append(c)
+    voices = {k: normalize(weighted_mean([(unit[c], weight(c)) for c in cs])) for k, cs in members.items()}
     placed = [(s, e, speaker_of[c]) for s, e, c in spans if c in speaker_of]
     return [(s, e, speaker_of[c]) if c in speaker_of else (s, e, fragment_speaker((s, e), placed, len(groups)))
-            for s, e, c in spans]
+            for s, e, c in spans], voices
+
+
+def speaker_voices(key, audio, turns, fps, max_seconds=30.0):
+    """
+    VoiceAnalyzer.voices: each speaker's voice from their longest stretches that nobody talks over, up to 30 s; a
+    speaker with less than 1.5 s of them has none.
+    """
+    out = {}
+    for k, parts in clean_parts(turns).items():
+        parts = longest_first(parts, max_seconds)
+        if sum(b - a for a, b in parts) >= 1.5 and (v := fps(key, audio, parts)) is not None:
+            out[k] = v
+    return out
 
 
 def merge_turns(spans, max_gap=1.0):
@@ -348,6 +370,122 @@ def without_overlaps(turns, min_length=MIN_PIECE_SECONDS, backchannel=BACKCHANNE
                 parts = [p for a, b in parts for p in ((a, min(b, starts[j])), (max(a, ends[j]), b)) if p[1] > p[0]]
         pieces += [(a, b, t[2]) for a, b in parts]
     return merge_turns([p for p in pieces if p[1] - p[0] >= min_length])
+
+
+# ---- 6. re-splitting long turns by voice (engine/VoiceSplit.kt) ----
+
+SPLIT_MIN_TURN = 3.0  # VoiceSplit.MIN_TURN_SEC
+WINDOW_SECONDS = 1.5  # VoiceSplit.WINDOW_SEC
+WINDOW_HOP = 0.75  # VoiceSplit.HOP_SEC
+CELL_SECONDS = 0.25  # VoiceSplit.CELL_SEC
+SPLIT_MARGIN = 0.10  # VoiceSplit.MARGIN
+MIN_RUN_SECONDS = 1.0  # VoiceSplit.MIN_RUN_SEC
+
+
+def windows(turn):
+    """VoiceSplit.windows: where the windows fingerprinted in a turn start, the last ending where the turn does."""
+    s, e = turn[0], turn[1]
+    starts = list(np.arange(s, e - WINDOW_SECONDS + 1e-9, WINDOW_HOP))
+    if starts and e - WINDOW_SECONDS - starts[-1] > 1e-6:
+        starts.append(e - WINDOW_SECONDS)
+    return [float(a) for a in starts]
+
+
+def split_turn(turn, speakers, starts, scores):
+    """
+    VoiceSplit.split: a turn cut into cells of CELL_SECONDS from its start, each scored per speaker by the mean of the
+    windows covering it (a window's scores are None if it has no fingerprint), the cells no window covers at either end
+    taking the nearest covered cell's. A cell goes to the best other speaker if they score at least SPLIT_MARGIN more
+    than the turn's own; a run of them shorter than MIN_RUN_SECONDS goes back; the turn is cut where the speaker changes.
+    """
+    s, e, k = turn
+    own = speakers.index(k)
+    cells = int(math.ceil((e - s) / CELL_SECONDS))
+    sums = np.zeros((cells, len(speakers)))
+    count = np.zeros(cells)
+    for a, row in zip(starts, scores):
+        if row is None:
+            continue
+        c0 = int(round((a - s) / CELL_SECONDS))
+        c1 = min(cells, int(round((a + WINDOW_SECONDS - s) / CELL_SECONDS)))
+        sums[c0:c1] += row
+        count[c0:c1] += 1
+    covered = count > 0
+    if not covered.any():
+        return [turn]
+    mean = np.where(covered[:, None], sums / np.maximum(count, 1)[:, None], 0)
+    others = mean.copy()
+    others[:, own] = -9
+    label = np.where(covered & (others.max(1) - mean[:, own] >= SPLIT_MARGIN), others.argmax(1), own)
+    ends = np.where(covered)[0]
+    label[:ends[0]] = label[ends[0]]
+    label[ends[-1] + 1:] = label[ends[-1]]
+    runs = []
+    i = 0
+    while i < cells:
+        j = i
+        while j + 1 < cells and label[j + 1] == label[i]:
+            j += 1
+        runs.append([i, j, label[i]])
+        i = j + 1
+    for r in runs:
+        if r[2] != own and min(e, s + (r[1] + 1) * CELL_SECONDS) - (s + r[0] * CELL_SECONDS) < MIN_RUN_SECONDS:
+            r[2] = own
+    pieces = []
+    for r in runs:
+        t0, t1, who = s + r[0] * CELL_SECONDS, min(e, s + (r[1] + 1) * CELL_SECONDS), speakers[r[2]]
+        if pieces and pieces[-1][2] == who:
+            pieces[-1] = (pieces[-1][0], t1, who)
+        else:
+            pieces.append((t0, t1, who))
+    # A piece too short to recognise (the turn's last cell, cut short at its end) joins the piece next to it.
+    k = 0
+    while len(pieces) > 1 and k < len(pieces):
+        a, b, w = pieces[k]
+        if b - a >= MIN_PIECE_SECONDS:
+            k += 1
+            continue
+        if k > 0:
+            pieces[k - 1] = (pieces[k - 1][0], b, pieces[k - 1][2])
+        else:
+            pieces[1] = (a, pieces[1][1], pieces[1][2])
+        del pieces[k]
+    return pieces
+
+
+def resplit(turns, speakers, score_window):
+    """
+    VoiceSplit.resplit: each turn of at least SPLIT_MIN_TURN seconds by one of the speakers with a voice (at least two of
+    them, or nothing changes), split by its windows' scores against each one's voice (score_window(start, end): a row in
+    sorted speaker order, or None), then merged as SegmentLogic.merge merges.
+    """
+    speakers = sorted(speakers)
+    if len(speakers) < 2:
+        return turns
+    out = []
+    for t in turns:
+        starts = windows(t) if t[1] - t[0] >= SPLIT_MIN_TURN and t[2] in speakers else []
+        if not starts:
+            out.append(t)
+            continue
+        out += split_turn(t, speakers, starts, [score_window(a, a + WINDOW_SECONDS) for a in starts])
+    return merge_turns(out)
+
+
+def voice_scorer(key, audio, resolved, turns, voices, fps):
+    """
+    The speakers that keep a voice in SpeakerSeparation, with their turns made not to overlap: the resolver's voices,
+    replaced by VoiceAnalyzer.voices of each person's merged speech where it has one. And a window's scores against them,
+    each window fingerprinted on its own (VoiceAnalyzer.fingerprint).
+    """
+    kept = {**voices, **speaker_voices(key, audio, merge_turns(resolved), fps)}
+    heard = {t[2] for t in turns}
+    speakers = sorted(k for k in kept if k in heard)
+
+    def score_window(a, b):
+        v = fps(key, audio, [(a, b)])
+        return None if v is None else np.array([cosine(v, kept[k]) for k in speakers])
+    return speakers, score_window
 
 
 # ---- scoring ----
@@ -472,13 +610,22 @@ def cases(labels, samples, cache, models):
 OTHER_SOUND_SHARE = 0.25
 
 
-def evaluate(case_list, labels, calls, fps, cfg, use_owner):
+def separate(key, audio, spans, prints, owner, cfg, fps, by_voice=True):
+    """SpeakerSeparation.monoTurns from diarization on: the turns transcribed, before they're numbered."""
+    resolved, voices = resolve(spans, prints, owner, cfg)
+    turns = without_overlaps(merge_turns(resolved))
+    if by_voice:
+        turns = resplit(turns, *voice_scorer(key, audio, resolved, turns, voices, fps))
+    return turns
+
+
+def evaluate(case_list, labels, calls, fps, cfg, use_owner, by_voice=True):
     results = []
     for title, key, audio, spans, ref, owner_person, base in case_list:
         plan = fingerprint_plan(spans, cfg)
         prints = {c: v for c, parts in plan.items() if (v := fps(key, audio, parts)) is not None}
         owner = owner_voiceprint(base, labels, calls, fps) if use_owner and owner_person else None
-        turns = without_overlaps(merge_turns(resolve(spans, prints, owner, cfg)))
+        turns = separate(key, audio, spans, prints, owner, cfg, fps, by_voice)
         acc, mapping, cover, coverage = score(turns, ref)
         people = len({r["person"] for r in ref})
         seconds = {k: sum(e - s for s, e, kk in turns if kk == k) for k in sorted({t[2] for t in turns})}
@@ -533,36 +680,53 @@ def main():
                 owner = owner_voiceprint(call, labels, calls, fps) if use_owner and owner_person else None
                 if use_owner and owner is None:
                     continue
-                expected = resolve(spans, prints, owner, base)
-                with open(os.path.join(out_dir, f"case{n}{'-owner' if use_owner else ''}.txt"), "w") as f:
+                suffix = '-owner' if use_owner else ''
+                resolved, voices = resolve(spans, prints, owner, base)
+                with open(os.path.join(out_dir, f"case{n}{suffix}.txt"), "w") as f:
                     f.write("".join(f"span {s!r} {e!r} {c}\n" for s, e, c in spans))
                     f.write("".join(f"plan {c} " + " ".join(f"{a!r} {b!r}" for a, b in parts) + "\n" for c, parts in plan.items()))
                     f.write("".join(f"fp {c} " + " ".join(repr(float(x)) for x in v) + "\n" for c, v in prints.items()))
                     if owner is not None:
                         f.write("owner " + " ".join(repr(float(x)) for x in owner) + "\n")
-                    f.write("expect " + " ".join(str(k) for _, _, k in expected) + "\n")
+                    f.write("expect " + " ".join(str(k) for _, _, k in resolved) + "\n")
+                # Re-splitting by voice: the turns, and each window's scores as the app's fingerprints would give them.
+                turns = without_overlaps(merge_turns(resolved))
+                speakers, score_window = voice_scorer(key, audio, resolved, turns, voices, fps)
+                scored = []
+
+                def logged(a, b):
+                    scored.append((a, score_window(a, b)))
+                    return scored[-1][1]
+                split = resplit(turns, speakers, logged)
+                with open(os.path.join(out_dir, f"split{n}{suffix}.txt"), "w") as f:
+                    f.write("speakers " + " ".join(str(k) for k in speakers) + "\n")
+                    f.write("".join(f"turn {float(s)!r} {float(e)!r} {k}\n" for s, e, k in turns))
+                    f.write("".join(f"window {float(a)!r} " + (" ".join(repr(float(x)) for x in row) if row is not None
+                                                                else "none") + "\n" for a, row in scored))
+                    f.write("".join(f"expect {float(s)!r} {float(e)!r} {k}\n" for s, e, k in split))
         print(f"\nfixtures written to {out_dir}")
 
     if args.tune:
-        grid = dict(anchor_seconds=[5.0, 8.0, 12.0], merge_at=[0.5, 0.52, 0.55, 0.6, 0.62, 0.65, 0.7, 0.72, 0.75],
+        grid = dict(anchor_seconds=[5.0, 8.0, 12.0], merge_at=[0.5, 0.52, 0.55, 0.6, 0.62, 0.64, 0.66, 0.7, 0.72, 0.75],
                     distinct_below=[0.4, 0.45, 0.5, 0.55], distinct_seconds=[2.0, 3.0, 5.0], probe_seconds=[0.5, 1.0, 1.5])
         rows = []
         for values in itertools.product(*grid.values()):
             cfg = dataclasses.replace(base, **dict(zip(grid, values)))
             if cfg.distinct_below > cfg.merge_at:
                 continue
-            res = evaluate(case_list, labels, calls, fps, cfg, False) + evaluate(case_list, labels, calls, fps, cfg, True)
+            res = [r for use_owner in (False, True) for r in evaluate(case_list, labels, calls, fps, cfg, use_owner, False)]
             rows.append((summary(res), dict(zip(grid, values))))
         rows.sort(key=lambda r: (-r[0][0], -r[0][1], -r[0][2]))
         total = 2 * len(case_list)
-        print(f"\nbest of {len(rows)} settings (right speaker count of {total}, worst and mean accuracy):")
+        print(f"\nbest of {len(rows)} settings, before re-splitting by voice (right speaker count of {total}, worst and "
+              f"mean accuracy):")
         for (right, worst, mean), values in rows[:15]:
             print(f"  {right}/{total}  worst {100 * worst:5.1f}%  mean {100 * mean:5.1f}%  {values}")
         print("\none setting at a time from the app's:")
         for name, options in grid.items():
             for v in options:
                 cfg = dataclasses.replace(base, **{name: v})
-                res = evaluate(case_list, labels, calls, fps, cfg, False) + evaluate(case_list, labels, calls, fps, cfg, True)
+                res = [r for use_owner in (False, True) for r in evaluate(case_list, labels, calls, fps, cfg, use_owner, False)]
                 right, worst, mean = summary(res)
                 mark = " (app)" if getattr(base, name) == v else ""
                 print(f"  {name:17s} {v:5}: {right}/{total}  worst {100 * worst:5.1f}%  mean {100 * mean:5.1f}%{mark}")

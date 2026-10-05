@@ -17,7 +17,7 @@ class SpeakerResolverParityTest {
     private val dir = File("../sample_recordings/.cache/fixtures")
 
     @Test fun matchesTheHarnessOnSampleCalls() {
-        val files = dir.listFiles { f -> f.name.endsWith(".txt") }?.sortedBy { it.name }.orEmpty()
+        val files = dir.listFiles { f -> f.name.startsWith("case") && f.name.endsWith(".txt") }?.sortedBy { it.name }.orEmpty()
         assumeTrue("no fixtures in $dir", files.isNotEmpty())
         for (file in files) {
             val spans = ArrayList<Span>()
