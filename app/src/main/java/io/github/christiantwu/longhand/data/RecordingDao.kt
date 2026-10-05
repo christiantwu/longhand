@@ -137,10 +137,11 @@ interface RecordingDao {
     /**
      * Counted before detection reads the call: marked detected with nothing found, so it follows Settings. If the app
      * dies detecting it, it's transcribed next time, where its attempts are counted, instead of detected again.
+     * [modified] is the file's own time (Recording.fileTime), as for [setDetection].
      */
     @Query(
         """UPDATE recordings SET spokenLanguages = '', speechSeconds = 0
-           WHERE id = :id AND spokenLanguages IS NULL AND sizeBytes = :size AND lastModified = :modified"""
+           WHERE id = :id AND spokenLanguages IS NULL AND sizeBytes = :size AND COALESCE(fileModified, lastModified) = :modified"""
     )
     suspend fun startDetection(id: Long, size: Long, modified: Long)
 
@@ -148,10 +149,13 @@ interface RecordingDao {
     @Query("UPDATE recordings SET spokenLanguages = NULL, speechSeconds = NULL WHERE id = :id AND spokenLanguages = ''")
     suspend fun interruptDetection(id: Long)
 
-    /** What language detection found in the call, unless its file changed since it was read ([size], [modified]). */
+    /**
+     * What language detection found in the call, unless its file changed since it was read ([size], and [modified], the
+     * file's own time: Recording.fileTime).
+     */
     @Query(
         """UPDATE recordings SET spokenLanguages = :codes, speechSeconds = :speechSeconds
-           WHERE id = :id AND sizeBytes = :size AND lastModified = :modified"""
+           WHERE id = :id AND sizeBytes = :size AND COALESCE(fileModified, lastModified) = :modified"""
     )
     suspend fun setDetection(id: Long, codes: String, speechSeconds: Float, size: Long, modified: Long)
 
@@ -175,11 +179,12 @@ interface RecordingDao {
 
     /**
      * Only the file columns: the worker may be changing the status at the same moment. The file changed, so the language
-     * detected in it is detected again.
+     * detected in it is detected again. A shrunk recording keeps the time of the call: [modified] is its copy's own time.
      */
     @Query(
-        """UPDATE recordings SET sizeBytes = :size, lastModified = :modified, displayName = :name, spokenLanguages = NULL,
-           speechSeconds = NULL WHERE id = :id"""
+        """UPDATE recordings SET sizeBytes = :size, displayName = :name, spokenLanguages = NULL, speechSeconds = NULL,
+           lastModified = CASE WHEN fileModified IS NULL THEN :modified ELSE lastModified END,
+           fileModified = CASE WHEN fileModified IS NULL THEN NULL ELSE :modified END WHERE id = :id"""
     )
     suspend fun updateFileInfo(id: Long, size: Long, modified: Long, name: String)
 
@@ -564,15 +569,20 @@ interface RecordingDao {
 
     /**
      * The newest transcript made by an older pipeline whose redo hasn't failed (or crashed three times). One edited by
-     * hand is kept as it is: a redo would replace the edits.
+     * hand is kept as it is: a redo would replace the edits. So is a shrunk one (Shrink.redoWaiting has the same rule):
+     * its redo would be made from the compressed copy, and replace a transcript made from the WAV.
      */
     @Query(
         """SELECT * FROM recordings WHERE status = 'DONE' AND pipeline < :current AND attempts < 3 AND editedAt IS NULL
-           ORDER BY lastModified DESC LIMIT 1"""
+           AND originalBytes IS NULL ORDER BY lastModified DESC LIMIT 1"""
     )
     suspend fun nextRedo(current: Int = Pipeline.CURRENT): Recording?
 
-    @Query("SELECT COUNT(*) FROM recordings WHERE status = 'DONE' AND pipeline < :current AND attempts < 3 AND editedAt IS NULL")
+    /** How many transcripts [nextRedo] has still to give. */
+    @Query(
+        """SELECT COUNT(*) FROM recordings WHERE status = 'DONE' AND pipeline < :current AND attempts < 3 AND editedAt IS NULL
+           AND originalBytes IS NULL"""
+    )
     suspend fun redoCount(current: Int = Pipeline.CURRENT): Int
 
     /** Counted before a redo starts, so one that keeps crashing the app is given up on. */
@@ -589,6 +599,80 @@ interface RecordingDao {
      */
     @Query("UPDATE recordings SET attempts = 3 WHERE id = :id")
     suspend fun giveUpRedo(id: Long)
+
+    // ---- shrinking WAV recordings (work.ShrinkWorker; which ones is up to Shrink.eligible) ----
+
+    /** Transcribed WAV recordings not shrunk or given up on, oldest call first: [Shrink.eligible] has the last word. */
+    @Query(
+        """SELECT * FROM recordings WHERE status = 'DONE' AND originalBytes IS NULL AND shrinkAttempts < :maxAttempts
+           AND displayName LIKE '%.wav' ORDER BY lastModified ASC"""
+    )
+    suspend fun shrinkCandidates(maxAttempts: Int = Shrink.MAX_ATTEMPTS): List<Recording>
+
+    /** For Settings: the calls shrunk, and the transcribed WAVs that may still be. */
+    @Query("SELECT * FROM recordings WHERE originalBytes IS NOT NULL OR (status = 'DONE' AND displayName LIKE '%.wav')")
+    fun observeShrinkable(): Flow<List<Recording>>
+
+    /** Counted before the recording is read, so one that keeps crashing the app is given up on. */
+    @Query("UPDATE recordings SET shrinkAttempts = shrinkAttempts + 1 WHERE id = :id")
+    suspend fun startShrink(id: Long)
+
+    /** Stopped cleanly (a call came in, the charger was unplugged), or the call changed meanwhile: not counted. */
+    @Query("UPDATE recordings SET shrinkAttempts = MAX(shrinkAttempts - 1, 0) WHERE id = :id")
+    suspend fun interruptShrink(id: Long)
+
+    /**
+     * It can't be shrunk (a form the encoder doesn't take, a file of the copy's name already there, or another call's row
+     * naming the copy's URI): not tried again.
+     */
+    @Query("UPDATE recordings SET shrinkAttempts = :maxAttempts WHERE id = :id")
+    suspend fun giveUpShrink(id: Long, maxAttempts: Int = Shrink.MAX_ATTEMPTS)
+
+    @Query("SELECT id FROM recordings WHERE documentUri = :uri")
+    suspend fun idForUri(uri: String): Long?
+
+    /**
+     * Whether a row other than call [id]'s names the URI its copy is expected at ([uri]; null when it can't be told) or a
+     * file called [name], in any case (the phone's storage ignores it in names): a transcript kept for a file of that name
+     * that disappeared, which a copy written there would be taken for. Asked before the copy is written, so nothing is
+     * written to a URI another call has.
+     */
+    @Query(
+        """SELECT EXISTS(SELECT 1 FROM recordings WHERE id != :id AND (documentUri = :uri OR displayName = :name COLLATE NOCASE))"""
+    )
+    suspend fun copyNameTaken(id: Long, uri: String?, name: String): Boolean
+
+    /** [saveShrunk]'s statement. @return the rows changed: 1, or 0 when the call isn't as it was read. */
+    @Query(
+        """UPDATE recordings SET documentUri = :uri, displayName = :name, sizeBytes = :size, fileModified = :modified,
+           originalBytes = sizeBytes WHERE id = :id AND documentUri = :from AND sizeBytes = :fromSize AND status = 'DONE'
+           AND originalBytes IS NULL"""
+    )
+    suspend fun setShrunk(id: Long, from: String, fromSize: Long, uri: String, name: String, size: Long, modified: Long): Int
+
+    /**
+     * The recording now names its compressed copy: [uri], called [name], of [size] bytes, last modified at [modified]
+     * (Recording.fileModified; the call's time stays). One statement, so the folder check finds the row with the WAV or
+     * with the copy, never neither or both. Only while the call is still transcribed from the WAV it was read from ([from],
+     * [fromSize]): one deleted, queued again or changed meanwhile is left alone (Shrink.Saved.CHANGED), and so is a copy
+     * whose URI another row has (Shrink.Saved.URI_TAKEN: a transcript kept for a file of that name that disappeared).
+     */
+    @Transaction
+    suspend fun saveShrunk(id: Long, from: String, fromSize: Long, uri: String, name: String, size: Long, modified: Long): Shrink.Saved {
+        if (idForUri(uri)?.let { it != id } == true) return Shrink.Saved.URI_TAKEN
+        return if (setShrunk(id, from, fromSize, uri, name, size, modified) == 1) Shrink.Saved.DONE else Shrink.Saved.CHANGED
+    }
+
+    /**
+     * The WAV couldn't be deleted after [saveShrunk], or its copy is gone: the row names it again ([from], called
+     * [fromName]), as it was, if it still names the copy [uri].
+     * @return the rows changed: 1, or 0 when it didn't name the copy.
+     */
+    @Query(
+        """UPDATE recordings SET documentUri = :from, displayName = :fromName, sizeBytes = originalBytes, fileModified = NULL,
+           originalBytes = NULL WHERE id = :id AND documentUri = :uri AND originalBytes IS NOT NULL"""
+    )
+    suspend fun undoShrunk(id: Long, uri: String, from: String, fromName: String): Int
 
     // ---- "call transcribed" notifications ----
 

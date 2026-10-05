@@ -38,6 +38,7 @@ object Work {
     const val AFTER_CALL = "after-call"
     const val CORRECTIONS = "corrections"
     const val VOICES = "voices"
+    const val SHRINK = "shrink"
 
     /**
      * How long after a call ends to look for its recording. Longer than the scan's
@@ -80,8 +81,11 @@ object Work {
      * There's deliberately no WorkManager charging constraint: it reads the battery differently
      * from [CallState.onCharger] (battery protection holding at 80% reads as not charging), so
      * the folder scan, which runs every 15 minutes, decides instead whether the phone is plugged in.
+     *
+     * Shrinking recordings stops for it ([stopShrinking]); a later folder check starts it again.
      */
     fun enqueueTranscribe(context: Context, followUp: Boolean = false) {
+        stopShrinking(context)
         val wm = WorkManager.getInstance(context)
         val infos = wm.getWorkInfosForUniqueWork(TRANSCRIBE).get()
         val running = infos.any { it.state == WorkInfo.State.RUNNING }
@@ -200,6 +204,38 @@ object Work {
     /** [set]'s last download failed: it keeps its error and Retry until the user retries or WorkManager forgets it. */
     private fun failed(context: Context, set: Models.Set): Boolean =
         WorkManager.getInstance(context).getWorkInfosForUniqueWork(downloadName(set)).get().any { it.state == WorkInfo.State.FAILED }
+
+    /**
+     * Shrinks transcribed WAV recordings ([ShrinkWorker]). Started by the folder check, on the charger when there's nothing
+     * to transcribe ([Shrinking.startIfDue]), so like other work that waits for the charger it starts within about 15
+     * minutes of plugging in; no WorkManager charging constraint, for the reason given at [enqueueTranscribe]. A running
+     * job is left alone.
+     */
+    fun shrink(context: Context) {
+        WorkManager.getInstance(context).enqueueUniqueWork(
+            SHRINK,
+            ExistingWorkPolicy.KEEP,
+            OneTimeWorkRequestBuilder<ShrinkWorker>().build(),
+        )
+    }
+
+    /** Transcription comes first, or the setting was turned off: the recording being shrunk stays a WAV. */
+    fun stopShrinking(context: Context) {
+        WorkManager.getInstance(context).cancelUniqueWork(SHRINK)
+    }
+
+    /**
+     * Transcription, or voice matching (which reads recordings' audio), is running or queued: shrinking waits for it.
+     * Blocking: call it off the main thread.
+     */
+    fun transcribing(context: Context): Boolean {
+        val wm = WorkManager.getInstance(context)
+        return listOf(TRANSCRIBE, VOICE_MATCH).any { name ->
+            wm.getWorkInfosForUniqueWork(name).get().any {
+                it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED || it.state == WorkInfo.State.BLOCKED
+            }
+        }
+    }
 
     /** Re-labels "You" across transcripts after the user confirms their voice. */
     fun matchVoices(context: Context) {

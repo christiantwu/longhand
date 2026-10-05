@@ -107,6 +107,10 @@ class SeparationTest {
 
         cache.put(rec(1), voice, separation())
         assertNull(cache.take(rec(1, modified = 6), voice))
+        // A shrunk call's compressed copy rewritten in place: the call's time stays, the file's own time is new.
+        val shrunk = rec(1).copy(fileModified = 50, originalBytes = 16_000)
+        cache.put(shrunk, voice, separation())
+        assertNull(cache.take(shrunk.copy(fileModified = 60), voice))
         // The owner confirmed their voice meanwhile, or set it for the first time: they may be told apart differently.
         cache.put(rec(1), voice, separation())
         assertNull(cache.take(rec(1), floatArrayOf(0.8f, 0.6f)))

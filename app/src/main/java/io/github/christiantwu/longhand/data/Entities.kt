@@ -81,10 +81,26 @@ data class Recording(
     val speechSeconds: Float? = null,
     /** Detection put the transcript in [language] instead of Settings' language (not chosen by hand). */
     @ColumnInfo(defaultValue = "0") val languageDetected: Boolean = false,
+    /**
+     * The recording file's own last-modified time when it isn't [lastModified], which stays the time of the call: set when
+     * a WAV was shrunk ([Shrink]), since the compressed copy that replaced it was written later. Null: the file's time is
+     * [lastModified]. See [fileTime].
+     */
+    val fileModified: Long? = null,
+    /** The WAV's size before the recording was shrunk to the compressed copy it now names; null if it never was. */
+    val originalBytes: Long? = null,
+    /** Times shrinking this recording started; a crash counts too, and it's given up after [Shrink.MAX_ATTEMPTS]. */
+    @ColumnInfo(defaultValue = "0") val shrinkAttempts: Int = 0,
 )
 
 /** What language detection found in the call; null until it's been detected. */
 val Recording.detection: CallLanguage.Detection? get() = CallLanguage.Detection.of(spokenLanguages, speechSeconds)
+
+/**
+ * The last-modified time the folder lists for the recording's file now: the call's time ([Recording.lastModified]),
+ * except after it was shrunk, when it's the compressed copy's. What the folder check compares to see if the file changed.
+ */
+val Recording.fileTime: Long get() = fileModified ?: lastModified
 
 /** Its speakers are being found while its language is detected: the worker shows that progress on the waiting call. */
 val Recording.detecting: Boolean get() = status == RecordingStatus.PENDING && progress > 0f

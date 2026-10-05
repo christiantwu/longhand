@@ -55,6 +55,23 @@ class ScanDiffTest {
         assertEquals(listOf(1L, 2L), plan.changed.map { it.first })
     }
 
+    @Test fun aShrunkCallIsComparedWithItsCopysOwnTime() {
+        // Its row keeps the call's time; the compressed copy was written later, and that's the time the folder lists.
+        val shrunk = rec(1, "copy", 7_000, now - 900_000, RecordingStatus.DONE)
+            .copy(fileModified = now - 120_000, originalBytes = 115_000)
+        val same = ScanDiff.plan(listOf(shrunk), listOf(ListedFile("copy", "c.m4a", 7_000, now - 120_000)), now)
+        assertTrue(same.newFiles.isEmpty() && same.requeueIds.isEmpty() && same.changed.isEmpty())
+        // The copy itself changing is a change like any other.
+        val changed = ScanDiff.plan(listOf(shrunk), listOf(ListedFile("copy", "c.m4a", 7_000, now - 100_000)), now)
+        assertEquals(listOf(1L), changed.requeueIds)
+    }
+
+    @Test fun aCopyJustWrittenIsLeftUntilItHasSettled() {
+        // Written moments ago, before its row names it: not yet a recording to add, even if a check saw it.
+        val plan = ScanDiff.plan(emptyList(), listOf(ListedFile("copy", "c.m4a", 7_000, now - 2_000)), now)
+        assertTrue(plan.newFiles.isEmpty())
+    }
+
     @Test fun skipsRecordingsOlderThanSetupCutoff() {
         val old = ListedFile("a", "a.mp3", 10, 1_000)
         val new = ListedFile("b", "b.mp3", 10, 5_000)

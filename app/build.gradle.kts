@@ -93,6 +93,8 @@ tasks.withType<Test>().configureEach {
         .withPropertyName("speakerParityFixtures")
         .withPathSensitivity(PathSensitivity.RELATIVE)
     inputs.dir("schemas").withPropertyName("roomSchemas").withPathSensitivity(PathSensitivity.RELATIVE)
+    // ShrinkDaoTest's SQLite is a native library: allowed, so newer JDKs don't warn about it.
+    jvmArgs("--enable-native-access=ALL-UNNAMED")
 }
 
 ksp {
@@ -121,4 +123,6 @@ dependencies {
     implementation(libs.coroutines.android)
 
     testImplementation(libs.junit)
+    // SQLite for the JVM, so tests run the DAO's statements on an in-memory Room database.
+    testImplementation(libs.sqlite.bundled.jvm)
 }

@@ -2,7 +2,6 @@ package io.github.christiantwu.longhand.ui
 
 import android.app.Application
 import android.content.ClipData
-import android.content.ContentResolver
 import android.content.Intent
 import android.net.Uri
 import android.provider.DocumentsContract
@@ -23,6 +22,7 @@ import io.github.christiantwu.longhand.data.Correction
 import io.github.christiantwu.longhand.data.toCorrections
 import io.github.christiantwu.longhand.data.Pipeline
 import io.github.christiantwu.longhand.data.CallerLookup
+import io.github.christiantwu.longhand.data.FolderScanner
 import io.github.christiantwu.longhand.data.KnownVoiceRow
 import io.github.christiantwu.longhand.data.Recording
 import io.github.christiantwu.longhand.data.Segment
@@ -42,6 +42,8 @@ import io.github.christiantwu.longhand.export.SpeakerNames
 import io.github.christiantwu.longhand.export.TranscriptFormatter
 import io.github.christiantwu.longhand.export.Turn
 import io.github.christiantwu.longhand.work.CommonCorrections
+import io.github.christiantwu.longhand.work.FolderScan
+import io.github.christiantwu.longhand.work.Shrinking
 import io.github.christiantwu.longhand.work.Work
 import io.github.christiantwu.longhand.work.learnVoicesFromAudio
 import kotlinx.coroutines.Dispatchers
@@ -242,7 +244,23 @@ class TranscriptViewModel(app: Application, savedState: SavedStateHandle) : Andr
 
     val playback = MutableStateFlow(PlaybackState())
     private var player: ExoPlayer? = null
+    /** The file [player] plays. */
+    private var playerUri: String? = null
     private var ticker: Job? = null
+
+    init {
+        // A WAV shrunk while this is open (Settings → Shrink WAV recordings) is another file from then on: the player
+        // follows it, at the same moment, playing or not as it was.
+        viewModelScope.launch {
+            recording.map { it?.documentUri }.distinctUntilChanged().collect { uri ->
+                val p = player ?: return@collect
+                if (uri == null || uri == playerUri) return@collect
+                p.setMediaItem(MediaItem.fromUri(uri), p.currentPosition)
+                p.prepare()
+                playerUri = uri
+            }
+        }
+    }
 
     // ---------------------------------------------------------------- playback
 
@@ -251,6 +269,7 @@ class TranscriptViewModel(app: Application, savedState: SavedStateHandle) : Andr
         val rec = recording.value ?: return
         val p = player ?: ExoPlayer.Builder(getApplication()).build().also { p ->
             p.setMediaItem(MediaItem.fromUri(rec.documentUri))
+            playerUri = rec.documentUri
             p.addListener(object : Player.Listener {
                 override fun onIsPlayingChanged(isPlaying: Boolean) {
                     playback.value = playback.value.copy(playing = isPlaying)
@@ -685,36 +704,52 @@ class TranscriptViewModel(app: Application, savedState: SavedStateHandle) : Andr
      * transcript: nothing will add it back.
      */
     suspend fun deleteCall(): DeleteResult {
-        val rec = recording.value ?: return DeleteResult(deleted = true)
+        val shown = recording.value ?: return DeleteResult(deleted = true)
         stop()
+        val watched = Settings(getApplication()).current().folderUri?.toUri()
+        // The file and the transcript go together, even if the screen closes in between. With the folder check's lock
+        // held, the recording isn't swapped for its compressed copy meanwhile (Settings → Shrink WAV recordings).
+        return withContext(Dispatchers.IO + NonCancellable) {
+            FolderScan.lock.withLock { deleteWithLock(shown.id, watched) }
+        }
+    }
+
+    /**
+     * [deleteCall] with FolderScan.lock held: a swap for a compressed copy cut short is settled first, and the row read
+     * again, so the file deleted is the one it names now. While this call's swap can't be settled yet, nothing is deleted:
+     * its WAV and its copy may both be there, and deleting the one its row names would leave the other for the folder
+     * check to add back as a call.
+     */
+    private suspend fun deleteWithLock(id: Long, watched: Uri?): DeleteResult {
         val app = getApplication<Application>()
         val resolver = app.contentResolver
+        Shrinking.recover(app, dao)
+        if (Shrinking.unsettled(app, id)) {
+            return DeleteResult(deleted = false, message = "Couldn't delete the recording yet; try again shortly.")
+        }
+        val rec = dao.get(id) ?: return DeleteResult(deleted = true)
         val uri = rec.documentUri.toUri()
-        val watched = Settings(app).current().folderUri?.toUri()
-        // The file and the transcript go together, even if the screen closes in between.
-        return withContext(Dispatchers.IO + NonCancellable) {
-            suspend fun gone(message: String? = null): DeleteResult {
-                dao.delete(rec.id)
-                return DeleteResult(deleted = true, message = message)
-            }
-            if (documentGone(resolver, uri)) return@withContext gone()
-            try {
-                // Write access, which deleting needs, comes with the folder (chosen since 0.6.0) and is
-                // taken up here in case only read access was kept.
-                val tree = DocumentsContract.buildTreeDocumentUri(uri.authority, DocumentsContract.getTreeDocumentId(uri))
-                resolver.takePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-                if (DocumentsContract.deleteDocument(resolver, uri)) gone()
-                else DeleteResult(deleted = false, message = "Couldn't delete the recording.")
-            } catch (e: Exception) {
-                Log.w(TAG, "can't delete ${rec.displayName}: ${e.javaClass.simpleName}")
-                val noAccess = generateSequence<Throwable>(e) { it.cause }.any { it is SecurityException }
-                when {
-                    documentGone(resolver, uri) -> gone()
-                    noAccess && !inFolder(uri, watched) ->
-                        gone("Transcript deleted. The recording stays in its old folder.")
-                    noAccess -> DeleteResult(deleted = false, needsFolderAccess = true)
-                    else -> DeleteResult(deleted = false, message = "Couldn't delete the recording.")
-                }
+        suspend fun gone(message: String? = null): DeleteResult {
+            dao.delete(rec.id)
+            return DeleteResult(deleted = true, message = message)
+        }
+        if (FolderScanner.isGone(app, uri)) return gone()
+        return try {
+            // Write access, which deleting needs, comes with the folder (chosen since 0.6.0) and is
+            // taken up here in case only read access was kept.
+            val tree = DocumentsContract.buildTreeDocumentUri(uri.authority, DocumentsContract.getTreeDocumentId(uri))
+            resolver.takePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
+            if (DocumentsContract.deleteDocument(resolver, uri)) gone()
+            else DeleteResult(deleted = false, message = "Couldn't delete the recording.")
+        } catch (e: Exception) {
+            Log.w(TAG, "can't delete ${rec.displayName}: ${e.javaClass.simpleName}")
+            val noAccess = generateSequence<Throwable>(e) { it.cause }.any { it is SecurityException }
+            when {
+                FolderScanner.isGone(app, uri) -> gone()
+                noAccess && !inFolder(uri, watched) ->
+                    gone("Transcript deleted. The recording stays in its old folder.")
+                noAccess -> DeleteResult(deleted = false, needsFolderAccess = true)
+                else -> DeleteResult(deleted = false, message = "Couldn't delete the recording.")
             }
         }
     }
@@ -731,7 +766,7 @@ class TranscriptViewModel(app: Application, savedState: SavedStateHandle) : Andr
     suspend fun allowDeleting(picked: Uri): Boolean {
         val app = getApplication<Application>()
         val watched = Settings(app).current().folderUri?.toUri() ?: return false
-        if (!sameTree(picked, watched)) return false
+        if (!FolderScanner.sameTree(picked, watched)) return false
         return withContext(Dispatchers.IO) {
             runCatching {
                 app.contentResolver.takePersistableUriPermission(
@@ -741,27 +776,8 @@ class TranscriptViewModel(app: Application, savedState: SavedStateHandle) : Andr
         }
     }
 
-    /**
-     * Whether [uri]'s document no longer exists. For a tree URI, ExternalStorageProvider reports a
-     * missing file as IllegalArgumentException rather than FileNotFoundException.
-     */
-    private fun documentGone(resolver: ContentResolver, uri: Uri): Boolean = try {
-        resolver.query(uri, arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID), null, null, null)
-            ?.use { !it.moveToFirst() } ?: true
-    } catch (e: IllegalArgumentException) {
-        true
-    } catch (e: java.io.FileNotFoundException) {
-        true
-    } catch (e: Exception) {
-        false // no access, for example: not known to be gone
-    }
-
-    private fun sameTree(a: Uri, b: Uri): Boolean = runCatching {
-        a.authority == b.authority && DocumentsContract.getTreeDocumentId(a) == DocumentsContract.getTreeDocumentId(b)
-    }.getOrDefault(false)
-
     /** Whether [document] lies in the [folder] Longhand watches (both from the folder picker). */
-    private fun inFolder(document: Uri, folder: Uri?): Boolean = folder != null && sameTree(document, folder)
+    private fun inFolder(document: Uri, folder: Uri?): Boolean = folder != null && FolderScanner.sameTree(document, folder)
 
     /** What [shareAudio] found: a chooser to start, or why the recording can't be shared. */
     sealed interface AudioShare {

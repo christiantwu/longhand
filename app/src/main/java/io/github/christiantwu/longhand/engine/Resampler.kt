@@ -18,6 +18,13 @@ class FloatBuilder(initialCapacity: Int = 1 shl 16) {
         data[size++] = v
     }
 
+    operator fun get(index: Int): Float = data[index]
+
+    /** Empties it, keeping its room, for a stream taken out a block at a time (AacShrinker). */
+    fun clear() {
+        size = 0
+    }
+
     /**
      * The samples collected. When at most [maxPadding] slots are unused, the buffer itself is
      * returned with a silent (zero) tail instead of copying; for an hour-long call that

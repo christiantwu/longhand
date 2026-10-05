@@ -41,6 +41,11 @@ data class AppSettings(
      * Summaries already written stay as they are.
      */
     val summariesInCallLanguage: Boolean = true,
+    /**
+     * Once a WAV recording is transcribed, replace it with a compressed copy, on the charger (work.ShrinkWorker). Off by
+     * default: it changes files in the recordings folder, and "Transcribe again" then works from the compressed copy.
+     */
+    val shrinkWav: Boolean = false,
 )
 
 private val Context.dataStore by preferencesDataStore("settings")
@@ -60,6 +65,7 @@ class Settings(private val context: Context) {
         val recogniseVoices = booleanPreferencesKey("recognise_voices")
         val editTipSeen = booleanPreferencesKey("edit_tip_seen")
         val summariesInCallLanguage = booleanPreferencesKey("summaries_in_call_language")
+        val shrinkWav = booleanPreferencesKey("shrink_wav")
     }
 
     val flow: Flow<AppSettings> = context.dataStore.data.map(::from)
@@ -86,6 +92,7 @@ class Settings(private val context: Context) {
     suspend fun setRecogniseVoices(v: Boolean) = set(Keys.recogniseVoices, v)
     suspend fun setEditTipSeen(v: Boolean) = set(Keys.editTipSeen, v)
     suspend fun setSummariesInCallLanguage(v: Boolean) = set(Keys.summariesInCallLanguage, v)
+    suspend fun setShrinkWav(v: Boolean) = set(Keys.shrinkWav, v)
 
     companion object {
         fun from(p: Preferences) = AppSettings(
@@ -102,6 +109,7 @@ class Settings(private val context: Context) {
             recogniseVoices = p[Keys.recogniseVoices] ?: false,
             editTipSeen = p[Keys.editTipSeen] ?: false,
             summariesInCallLanguage = p[Keys.summariesInCallLanguage] ?: true,
+            shrinkWav = p[Keys.shrinkWav] ?: false,
         )
     }
 }

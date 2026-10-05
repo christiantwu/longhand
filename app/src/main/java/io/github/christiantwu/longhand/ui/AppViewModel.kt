@@ -12,6 +12,7 @@ import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.PowerManager
+import android.provider.DocumentsContract
 import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
 import androidx.lifecycle.AndroidViewModel
@@ -29,6 +30,7 @@ import io.github.christiantwu.longhand.data.KnownVoiceRow
 import io.github.christiantwu.longhand.data.Recording
 import io.github.christiantwu.longhand.data.SearchPattern
 import io.github.christiantwu.longhand.data.Settings
+import io.github.christiantwu.longhand.data.Shrink
 import io.github.christiantwu.longhand.engine.Models
 import io.github.christiantwu.longhand.engine.VoiceProfile
 import io.github.christiantwu.longhand.export.CallText
@@ -43,6 +45,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -94,6 +97,12 @@ data class DeviceState(
     /** Transcripts from before 0.5.0 still to be redone on the charger (their voices aren't learned). */
     val redoWaiting: Int = 0,
 )
+
+/**
+ * Settings → Shrink WAV recordings: how many calls have been shrunk and how much space that freed, and how many
+ * transcribed WAVs are still to be.
+ */
+data class ShrinkState(val shrunk: Int = 0, val freedBytes: Long = 0, val waiting: Int = 0)
 
 /**
  * "Calls with …": calls with the contact called [name] or with [number], and calls where a speaker
@@ -387,6 +396,50 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun setChargingOnly(v: Boolean) = viewModelScope.launch {
         settingsStore.setChargingOnly(v)
         Work.scanNow(getApplication())
+    }
+
+    /** What shrinking has done, and what waits for it: WAVs in the watched folder that [Shrink.eligible] takes. */
+    val shrinkState: StateFlow<ShrinkState> = combine(dao.observeShrinkable(), settings) { recs, s ->
+        val folder = s?.folderUri?.toUri()
+        val shrunk = recs.filter { it.originalBytes != null }
+        ShrinkState(
+            shrunk = shrunk.size,
+            freedBytes = shrunk.sumOf { (it.originalBytes ?: 0L) - it.sizeBytes }.coerceAtLeast(0),
+            waiting = recs.count { Shrink.eligible(it) && folder != null && FolderScanner.sameTree(it.documentUri.toUri(), folder) },
+        )
+    }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ShrinkState())
+
+    /**
+     * Turns "Shrink WAV recordings" on or off. On, it needs to change files in the recordings folder: false when Longhand
+     * may only read it, and nothing changed; choosing the folder again ([allowShrinking]) gives it that. It starts at the
+     * next folder check on the charger. Off, a recording being shrunk stays a WAV.
+     */
+    suspend fun setShrinkWav(on: Boolean): Boolean = withContext(Dispatchers.IO) {
+        val app = getApplication<Application>()
+        val folder = settingsStore.current().folderUri?.toUri()
+        if (on && folder != null && !FolderScanner.takeWriteAccess(app, folder)) return@withContext false
+        settingsStore.setShrinkWav(on)
+        if (on) Work.scanNow(app) else Work.stopShrinking(app)
+        true
+    }
+
+    /**
+     * After the folder was chosen again to allow shrinking: keeps write access to it and turns shrinking on, if it's the
+     * folder Longhand watches. False if another folder was chosen (nothing changes then).
+     */
+    suspend fun allowShrinking(picked: Uri): Boolean = withContext(Dispatchers.IO) {
+        val app = getApplication<Application>()
+        val watched = settingsStore.current().folderUri?.toUri() ?: return@withContext false
+        if (!FolderScanner.sameTree(picked, watched) || !FolderScanner.takeWriteAccess(app, picked)) return@withContext false
+        settingsStore.setShrinkWav(true)
+        refresh()
+        Work.scanNow(app)
+        true
+    }
+
+    /** Where the folder picker should open to choose the folder again: the folder Longhand watches. */
+    fun watchedFolder(): Uri? = settings.value?.folderUri?.toUri()?.let { tree ->
+        runCatching { FolderScanner.documentUri(tree, DocumentsContract.getTreeDocumentId(tree)) }.getOrNull()
     }
 
 }

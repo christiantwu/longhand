@@ -15,6 +15,8 @@ import io.github.christiantwu.longhand.data.ScanDiff
 import io.github.christiantwu.longhand.data.Settings
 import io.github.christiantwu.longhand.engine.AudioDecoder
 import io.github.christiantwu.longhand.engine.Models
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 /** The periodic and on-open folder check. */
 class FolderScanWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
@@ -26,9 +28,18 @@ class FolderScanWorker(context: Context, params: WorkerParameters) : CoroutineWo
 
 /**
  * Looks for new recordings in the watched folder, names their callers, and queues them for transcription.
- * Also keeps the models up to date ([Work.updateModels]).
+ * Also keeps the models up to date ([Work.updateModels]), and on the charger with nothing to transcribe starts
+ * shrinking WAV recordings, if that's turned on ([Shrinking.startIfDue]).
  */
 object FolderScan {
+
+    /**
+     * Held while the folder is listed and the rows brought up to date with it, while a recording's WAV is swapped for its
+     * compressed copy ([Shrinking.swap]), and while a call is deleted (TranscriptViewModel.deleteCall), so a check never
+     * lists the folder with both files, or the copy before its row names it, and a delete removes the file its row names
+     * now: the same call is never added again, or lost.
+     */
+    val lock = Mutex()
 
     suspend fun run(context: Context) {
         val settings = Settings(context).current()
@@ -42,19 +53,23 @@ object FolderScan {
             return
         }
         val dao = AppDatabase.get(context).recordings()
-        val listed = FolderScanner.list(context, folder)
-        val plan = ScanDiff.plan(dao.all(), listed, System.currentTimeMillis())
+        lock.withLock {
+            // A shrink the app was stopped in the middle of is finished or undone first, so the folder is listed as it ends up.
+            Shrinking.recover(context, dao)
+            val listed = FolderScanner.list(context, folder)
+            val plan = ScanDiff.plan(dao.all(), listed, System.currentTimeMillis())
 
-        dao.insertAll(plan.newFiles.map {
-            Recording(
-                documentUri = it.uri, displayName = it.name, sizeBytes = it.size, lastModified = it.lastModified,
-                status = ScanDiff.initialStatus(it, settings.skipBefore),
-                durationMs = AudioDecoder.probeDurationMs(context, it.uri.toUri()),
-            )
-        })
-        plan.changed.forEach { (id, f) -> dao.updateFileInfo(id, f.size, f.lastModified, f.name) }
-        if (plan.requeueIds.isNotEmpty()) dao.requeue(plan.requeueIds)
-        Log.i(TAG, "scan: ${listed.size} files, ${plan.newFiles.size} new, ${plan.changed.size} changed, ${plan.requeueIds.size} requeued")
+            dao.insertAll(plan.newFiles.map {
+                Recording(
+                    documentUri = it.uri, displayName = it.name, sizeBytes = it.size, lastModified = it.lastModified,
+                    status = ScanDiff.initialStatus(it, settings.skipBefore),
+                    durationMs = AudioDecoder.probeDurationMs(context, it.uri.toUri()),
+                )
+            })
+            plan.changed.forEach { (id, f) -> dao.updateFileInfo(id, f.size, f.lastModified, f.name) }
+            if (plan.requeueIds.isNotEmpty()) dao.requeue(plan.requeueIds)
+            Log.i(TAG, "scan: ${listed.size} files, ${plan.newFiles.size} new, ${plan.changed.size} changed, ${plan.requeueIds.size} requeued")
+        }
 
         // Who each new call was with. When call log or contacts access has grown since the last
         // lookups (granted here or in system settings), every call is looked up again.
@@ -83,7 +98,8 @@ object FolderScan {
         // Transcripts from an older pipeline are redone too, on the charger.
         val redo = since == 0L && dao.redoCount() > 0
         when {
-            !waiting(since) && !redo -> {}
+            // Nothing to transcribe: on the charger, WAVs already transcribed may be shrunk.
+            !waiting(since) && !redo -> Shrinking.startIfDue(context, dao, settings)
             // During a call nothing heavy starts; the call's end triggers the after-call check.
             CallState.inCall(context) -> {
                 Log.i(TAG, "scan: a call is in progress; processing starts after it ends")

@@ -96,6 +96,7 @@ import io.github.christiantwu.longhand.data.CallerLookup
 import io.github.christiantwu.longhand.data.Pipeline
 import io.github.christiantwu.longhand.data.Recording
 import io.github.christiantwu.longhand.data.RecordingStatus
+import io.github.christiantwu.longhand.data.Shrink
 import io.github.christiantwu.longhand.data.SummaryStatus
 import io.github.christiantwu.longhand.data.detection
 import io.github.christiantwu.longhand.engine.CallLanguage
@@ -790,9 +791,12 @@ private fun SpeakerDialog(
 
 private class SpeakerChoice(val title: String, val detail: String, val onClick: () -> Unit)
 
-/** Made before 0.5.0 and still to be redone on the charger (a redo that failed isn't tried again, nor one of a call edited by hand). */
+/**
+ * Made before 0.5.0 and still to be redone on the charger, by the same rule as the redo itself ([Shrink.redoWaiting]): a
+ * redo that failed isn't tried again, nor one of a call edited by hand or shrunk.
+ */
 private val Recording.redoComing: Boolean
-    get() = status == RecordingStatus.DONE && pipeline < Pipeline.CURRENT && attempts < 3 && editedAt == null
+    get() = status == RecordingStatus.DONE && Shrink.redoWaiting(this)
 
 /** What a line's long-press menu (and TalkBack's actions for it) offers. */
 private enum class LineMenu(val label: String) {

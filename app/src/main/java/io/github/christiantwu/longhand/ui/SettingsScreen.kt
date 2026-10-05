@@ -31,6 +31,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -45,7 +46,9 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.christiantwu.longhand.BuildConfig
 import io.github.christiantwu.longhand.data.FolderScanner
+import io.github.christiantwu.longhand.data.Shrink
 import io.github.christiantwu.longhand.engine.Models
+import kotlinx.coroutines.launch
 
 @Composable
 fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit, onCorrections: () -> Unit, onLicences: () -> Unit) {
@@ -57,7 +60,12 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit, onCorrections: () -> Un
     val corrections by vm.corrections.collectAsStateWithLifecycle()
     val usableLanguages by vm.usableLanguages.collectAsStateWithLifecycle()
     val languageId by vm.languageIdModel.collectAsStateWithLifecycle()
+    val shrink by vm.shrinkState.collectAsStateWithLifecycle()
     var confirmForgetVoices by remember { mutableStateOf(false) }
+    // Turning shrinking on found Longhand may only read the folder: it's to be chosen again. Or that went wrong.
+    var askShrinkAccess by remember { mutableStateOf(false) }
+    var shrinkProblem by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
     val s = settings ?: return
 
     LifecycleResumeEffect(Unit) {
@@ -71,6 +79,13 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit, onCorrections: () -> Un
     val askCallerAccess = rememberPermissionRequest(Manifest.permission.READ_CALL_LOG, Manifest.permission.READ_CONTACTS, onResult = vm::refresh)
     val askPhone = rememberPermissionRequest(Manifest.permission.READ_PHONE_STATE, onResult = vm::refresh)
     val askNotifications = rememberPermissionRequest(Manifest.permission.POST_NOTIFICATIONS, onResult = vm::refresh)
+    val chooseFolderForShrink = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocumentTree()) { picked ->
+        if (picked != null) scope.launch {
+            if (!vm.allowShrinking(picked)) {
+                shrinkProblem = "That isn't the folder Longhand watches, so nothing was changed. Choose the folder shown under Recordings."
+            }
+        }
+    }
 
     Column(Modifier.fillMaxSize().safeDrawingPadding().verticalScroll(rememberScrollState())) {
         AppBar(navigation = { BackButton(onBack) })
@@ -217,6 +232,10 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit, onCorrections: () -> Un
                 }
             }
 
+            Section("Storage") {
+                ShrinkWav(s.shrinkWav, shrink, onChange = { on -> scope.launch { if (!vm.setShrinkWav(on)) askShrinkAccess = true } })
+            }
+
             Section("Transcription language") {
                 LanguageChoice(s.language, vm)
                 if (usableLanguages >= 2) DetectLanguage(s.detectLanguage, languageId, vm)
@@ -241,6 +260,32 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit, onCorrections: () -> Un
                     Modifier.padding(start = 16.dp, end = 16.dp, top = 6.dp))
             }
         }
+    }
+
+    if (askShrinkAccess) AlertDialog(
+        onDismissRequest = { askShrinkAccess = false },
+        title = { Text("Allow changing recordings") },
+        text = {
+            Text("Longhand can read your recordings folder but not change it. To let it shrink recordings, choose the " +
+                "same folder once more, then tap “Use this folder”.")
+        },
+        confirmButton = {
+            TextAction("Choose folder", click@{
+                if (!askShrinkAccess) return@click
+                askShrinkAccess = false
+                chooseFolderForShrink.launch(vm.watchedFolder())
+            })
+        },
+        dismissButton = { TextAction("Cancel", { askShrinkAccess = false }) },
+    )
+
+    shrinkProblem?.let { problem ->
+        AlertDialog(
+            onDismissRequest = { shrinkProblem = null },
+            title = { Text("Not turned on") },
+            text = { Text(problem) },
+            confirmButton = { TextAction("OK", { shrinkProblem = null }) },
+        )
     }
 
     if (confirmForgetVoices) {
@@ -303,6 +348,53 @@ private fun DetectLanguage(on: Boolean, model: ModelState, vm: AppViewModel) {
                 Row(Modifier.offset(x = (-12).dp)) { ModelAction(model, Models.Set.LANGUAGE_ID, vm) }
             },
         )
+    }
+}
+
+/**
+ * "Shrink WAV recordings after transcription": the switch, and while it's on, what it has done and what waits. The sizes
+ * are for the Phone app's WAVs (16-bit mono at 16 kHz) and the copy's format ([Shrink]).
+ */
+@Composable
+private fun ShrinkWav(on: Boolean, state: ShrinkState, onChange: (Boolean) -> Unit) {
+    val wavBits = Shrink.SAMPLE_RATE * 16
+    val count = if (on) 2 else 1
+    Column(verticalArrangement = Arrangement.spacedBy(GroupGap)) {
+        GroupRow(
+            groupShape(0, count), minHeight = 72.dp,
+            action = Modifier.toggleable(value = on, role = Role.Switch, onValueChange = onChange),
+        ) {
+            RowText("Shrink WAV recordings after transcription",
+                "Once a WAV call is transcribed, it's re-encoded on the charger as compressed audio (.m4a), about " +
+                    "${Shrink.ratio(Shrink.SAMPLE_RATE)} times smaller: an hour goes from about " +
+                    "${Shrink.megabytesPerHour(wavBits)}\u00A0MB to ${Shrink.megabytesPerHour(Shrink.BITS_PER_CHANNEL)}\u00A0MB. " +
+                    "The transcript keeps the accuracy it got from the WAV, but a later “Transcribe again” uses the " +
+                    "smaller file and may be less accurate. The Phone app keeps no record of its recordings, so it isn't affected.")
+            Switch(
+                checked = on, onCheckedChange = null,
+                thumbContent = if (on) {
+                    { Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(SwitchDefaults.IconSize)) }
+                } else null,
+            )
+        }
+        if (on) GroupRow(groupShape(1, count)) {
+            Text(shrinkStatus(state), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f))
+        }
+    }
+}
+
+/** "Shrunk 12 calls, freeing 1.3 GB. 2 more wait for the charger." */
+private fun shrinkStatus(state: ShrinkState): String {
+    fun calls(n: Int) = if (n == 1) "1 call" else "$n calls"
+    fun wait(n: Int) = if (n == 1) "waits" else "wait"
+    val freed = if (state.freedBytes >= 1e9) "%.1f\u00A0GB".format(state.freedBytes / 1e9)
+        else "${Math.round(state.freedBytes / 1e6)}\u00A0MB"
+    return when {
+        state.shrunk == 0 && state.waiting == 0 -> "No WAV recordings to shrink yet."
+        state.shrunk == 0 -> "${calls(state.waiting)} ${wait(state.waiting)} to be shrunk on the charger."
+        state.waiting == 0 -> "Shrunk ${calls(state.shrunk)}, freeing $freed."
+        else -> "Shrunk ${calls(state.shrunk)}, freeing $freed. ${state.waiting} more ${wait(state.waiting)} for the charger."
     }
 }
 

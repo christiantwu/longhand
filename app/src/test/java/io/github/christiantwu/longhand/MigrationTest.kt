@@ -121,4 +121,18 @@ class MigrationTest {
             columns(6, "recordings") - columns(5, "recordings").keys,
         )
     }
+
+    @Test fun version7AddsTheShrinkingColumnsAsRoomExportsThem() {
+        val sql = executed { AppDatabase.MIGRATION_6_7.migrate(it) }
+        assertEquals(tables(6), tables(7))
+        assertEquals(setOf("recordings"), assertAddsColumns(6, sql))
+        // No call has been shrunk or tried yet.
+        assertEquals(
+            mapOf(
+                "`fileModified`" to "`fileModified` INTEGER", "`originalBytes`" to "`originalBytes` INTEGER",
+                "`shrinkAttempts`" to "`shrinkAttempts` INTEGER NOT NULL DEFAULT 0",
+            ),
+            columns(7, "recordings") - columns(6, "recordings").keys,
+        )
+    }
 }

@@ -12,7 +12,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         Recording::class, Segment::class, SpeakerName::class, SpeakerVoice::class,
         KnownVoice::class, VoiceSample::class, VoiceRejection::class, Correction::class,
     ],
-    version = 6,
+    version = 7,
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun recordings(): RecordingDao
@@ -24,7 +24,7 @@ abstract class AppDatabase : RoomDatabase() {
 
         fun get(context: Context): AppDatabase = instance ?: synchronized(this) {
             instance ?: Room.databaseBuilder(context.applicationContext, AppDatabase::class.java, "transcripts.db")
-                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6)
+                .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7)
                 .build().also { instance = it }
         }
 
@@ -113,6 +113,19 @@ abstract class AppDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE `recordings` ADD COLUMN `spokenLanguages` TEXT")
                 db.execSQL("ALTER TABLE `recordings` ADD COLUMN `speechSeconds` REAL")
                 db.execSQL("ALTER TABLE `recordings` ADD COLUMN `languageDetected` INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        /**
+         * 7: shrinking WAV recordings after they're transcribed (off by default). A shrunk call keeps its call time and
+         * notes its compressed copy's own file time and the WAV's size; each counts the times shrinking it started. No
+         * call has been shrunk or tried yet.
+         */
+        val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE `recordings` ADD COLUMN `fileModified` INTEGER")
+                db.execSQL("ALTER TABLE `recordings` ADD COLUMN `originalBytes` INTEGER")
+                db.execSQL("ALTER TABLE `recordings` ADD COLUMN `shrinkAttempts` INTEGER NOT NULL DEFAULT 0")
             }
         }
     }

@@ -34,6 +34,8 @@ and no server, and nothing is uploaded.
   else, and add common corrections, like “UV” → “Youvee”, for every new transcript.
 - **Search and share.** Search by name, topic or words. Share a transcript as text or
   Markdown, or share the recording itself.
+- **Saves space, if you like.** Once a WAV recording is transcribed, Longhand can replace it
+  with a compressed copy about 16 times smaller. It's off by default.
 - **Languages:** English, 25 European languages, Chinese, Japanese and Korean, or Hindi (with
   English, including calls that mix the two). Keep two or more, and each call is transcribed in
   the one it's in. Summaries are written in the call's language too. That was tested in German,
@@ -70,7 +72,9 @@ and no server, and nothing is uploaded.
   for summaries.
 - For the best accuracy, record calls as WAV: in the Phone app's settings, turn on
   "Use call recording V2 (experimental)", then choose WAV as the recording format.
-  Compressed recordings are transcribed noticeably less accurately.
+  Compressed recordings are transcribed noticeably less accurately. WAV takes about 115 MB an
+  hour; with **Shrink WAV recordings after transcription** (Settings → Storage), each one is
+  replaced by a copy of about 7 MB an hour once it's transcribed (see "How it works").
 
 ## Install
 
@@ -331,6 +335,48 @@ tests of the model, recognition took about 1.8 times as long as the European lan
    **Share → Share audio** sends the recording file itself, even before it's transcribed or if
    transcribing failed. Longhand makes no copy of its own: the app you pick can read only that
    one file, and only the file is sent, with no title or summary.
+5. **Shrinking WAV recordings** (Settings → Storage → **Shrink WAV recordings after transcription**,
+   off by default). Once a WAV call is transcribed, `ShrinkWorker` replaces it with a compressed copy
+   in the format the Phone app's own AAC option records: AAC-LC in an `.m4a` file, mono, at 16 kHz
+   and 16 kbit/s. The Phone app's WAVs (16-bit mono at 16 kHz) come out about 16 times smaller, about
+   7 MB an hour instead of 115 MB. A stereo WAV keeps both channels, at 16 kbit/s each, and one
+   recorded above 16 kHz comes down to it, the rate calls are transcribed at. The transcript keeps the
+   accuracy it got from the WAV, and so do its summary, edits and voices, since nothing is transcribed
+   again. The cost: a later **Transcribe again** works from the compressed copy, which is transcribed
+   less accurately (see Requirements). Turning it on asks for write access to the recordings folder,
+   as **Delete** does, if Longhand may only read it. Settings shows how many calls were shrunk and the
+   space that freed.
+   - **When:** on the charger, while nothing is being transcribed and no call is in progress. The
+     folder check starts it when there's nothing else to do, and it stops, leaving the WAV it was on,
+     when a call comes in, the charger is unplugged or transcription is queued. A call waiting to be
+     redone for a newer pipeline is redone from the WAV first, and a shrunk call is never redone for
+     one: only **Transcribe again** redoes it. Edited calls are shrunk like any other.
+   - **Checks:** the copy is encoded in the app's cache (`engine/AacShrinker.kt`, with MediaCodec and
+     MediaMuxer, as the Phone app uses them) and decoded again to its end. It must last as long as the
+     WAV to within 0.5 s, have as many channels, not be silent, and be within 6 dB of the WAV's loudness
+     (`data/Shrink.kt`). The WAV itself must decode to the length its file holds, to within a second,
+     so one whose header says less than it holds (as a recorder stopped partway can leave) is kept as
+     it is. Only then is the copy written into the folder, under a name the folder check ignores
+     (`<name>.m4a.part`), synced to the storage, read back and checked by its length and SHA-256, and
+     renamed to the WAV's own name with `.m4a`. The call's row is then pointed at it in one statement,
+     and only after that is the WAV deleted. If the
+     WAV can't be deleted and is still there just as it was, the row names it again and the copy goes;
+     if it can't be told whether it's there, nothing more is touched until it can. Anything that fails
+     before the row names the copy leaves the WAV and the transcript as they were. A call is tried at
+     most three times, and never when a file with the copy's name is already there, or another call's
+     transcript is kept for a file of that name: nothing is written then.
+   - **The same call:** the folder check never lists the folder during a swap, and **Delete** waits for
+     one to finish, so neither sees a WAV and its copy together, or the copy before its row names it. A
+     swap cut short by a crash is finished or undone before the folder is next listed, and is noted
+     until what it left is certainly tidied up; until then that call isn't deleted (**Delete** asks to
+     try again shortly). A WAV is deleted only while its row names a copy that's there and still reads
+     back with the length and SHA-256 it was written with, and only just as it was copied; a copy is
+     never deleted while another call's row names it (`Shrink.recovery`). Playback, Share audio, Delete
+     and search follow the call to its new file. The row keeps the call's time (the WAV's modification
+     time, which call log matching, the calls list and exports go by); the copy's own time is stored
+     beside it, since storage access can't set a file's time.
+   - **The Phone app:** GrapheneOS's Phone app keeps no list or database of its recordings, and no
+     reference to one once it's saved (checked in its source), so replacing a recording doesn't affect it.
 
 The finished-call notification reads like "Call with Dana Whitfield regarding lake cabin and
 car rental".

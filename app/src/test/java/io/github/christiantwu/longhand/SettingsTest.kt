@@ -39,6 +39,12 @@ class SettingsTest {
         assertFalse(Settings.from(preferencesOf(booleanPreferencesKey("detect_language") to false)).detectLanguage)
     }
 
+    @Test fun wavRecordingsAreKeptUntilShrinkingIsTurnedOn() {
+        assertFalse(AppSettings().shrinkWav)
+        assertFalse(Settings.from(emptyPreferences()).shrinkWav)
+        assertTrue(Settings.from(preferencesOf(booleanPreferencesKey("shrink_wav") to true)).shrinkWav)
+    }
+
     @Test fun summariesAreInTheCallsLanguageUntilTurnedOff() {
         assertTrue(AppSettings().summariesInCallLanguage)
         assertTrue(Settings.from(emptyPreferences()).summariesInCallLanguage)

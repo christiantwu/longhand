@@ -15,6 +15,7 @@ import io.github.christiantwu.longhand.data.Segment
 import io.github.christiantwu.longhand.data.Settings
 import io.github.christiantwu.longhand.data.SummaryStatus
 import io.github.christiantwu.longhand.data.detection
+import io.github.christiantwu.longhand.data.fileTime
 import io.github.christiantwu.longhand.engine.AudioDecoder
 import io.github.christiantwu.longhand.engine.LanguageDetector
 import io.github.christiantwu.longhand.engine.Models
@@ -224,7 +225,7 @@ class TranscribeWorker(context: Context, params: WorkerParameters) : CoroutineWo
         suspend fun start(rec: Recording) {
             current = rec
             tried += rec.id
-            dao.startDetection(rec.id, rec.sizeBytes, rec.lastModified)
+            dao.startDetection(rec.id, rec.sizeBytes, rec.fileTime)
         }
         var detector: LanguageDetector? = null
         try {
@@ -282,7 +283,7 @@ class TranscribeWorker(context: Context, params: WorkerParameters) : CoroutineWo
                     val found = Models.recognizerLock.withLock {
                         if (available()) lid.detect(audio.mono, separation.speech) else null
                     } ?: break
-                    dao.setDetection(rec.id, found.stored, found.speechSeconds, rec.sizeBytes, rec.lastModified)
+                    dao.setDetection(rec.id, found.stored, found.speechSeconds, rec.sizeBytes, rec.fileTime)
                     Log.i(TAG, "${rec.displayName}: languages ${found.codes} in %.1f s of speech, took %d ms"
                         .format(found.speechSeconds, SystemClock.elapsedRealtime() - started))
                 } catch (e: CancellationException) {
@@ -511,20 +512,20 @@ class TranscribeWorker(context: Context, params: WorkerParameters) : CoroutineWo
  */
 class SeparationCache(private val capacity: Int) {
 
-    private class Kept(val sizeBytes: Long, val lastModified: Long, val owner: FloatArray?, val separation: Separation)
+    private class Kept(val sizeBytes: Long, val fileTime: Long, val owner: FloatArray?, val separation: Separation)
 
     private val kept = LinkedHashMap<Long, Kept>()
 
     fun put(rec: Recording, owner: FloatArray?, separation: Separation) {
         kept.remove(rec.id)
-        kept[rec.id] = Kept(rec.sizeBytes, rec.lastModified, owner, separation)
+        kept[rec.id] = Kept(rec.sizeBytes, rec.fileTime, owner, separation)
         while (kept.size > capacity) kept.remove(kept.keys.first())
     }
 
     /** [rec]'s speakers, if they still hold with the owner's voiceprint [owner]; no longer kept either way. */
     fun take(rec: Recording, owner: FloatArray?): Separation? {
         val k = kept.remove(rec.id) ?: return null
-        return k.separation.takeIf { k.sizeBytes == rec.sizeBytes && k.lastModified == rec.lastModified && k.owner contentEquals owner }
+        return k.separation.takeIf { k.sizeBytes == rec.sizeBytes && k.fileTime == rec.fileTime && k.owner contentEquals owner }
     }
 }
 
