@@ -27,6 +27,12 @@ class SegmentLogicTest {
         assertEquals(listOf(Span(0f, 4f, 0)), out)
     }
 
+    @Test fun spansAreCutOffAtTheEndOfTheCall() {
+        // Diarization hears silence after the call: what it finds there isn't part of the call.
+        val spans = listOf(Span(0f, 4f, 0), Span(3f, 10.4f, 1), Span(10f, 10.2f, 0), Span(10.2f, 10.5f, 2), Span(10.3f, 10.6f, 1))
+        assertEquals(listOf(Span(0f, 4f, 0), Span(3f, 10.2f, 1), Span(10f, 10.2f, 0)), SegmentLogic.upTo(spans, 10.2f))
+    }
+
     private fun withoutOverlaps(vararg turns: Span) = SegmentLogic.withoutOverlaps(turns.toList(), minLength = 0.2f)
 
     @Test fun anMmHmmSaidOverSomeoneGoesAndTheirTurnKeepsTheAudio() {

@@ -26,11 +26,15 @@ class FloatBuilder(initialCapacity: Int = 1 shl 16) {
     }
 
     /**
-     * The samples collected. When at most [maxPadding] slots are unused, the buffer itself is
-     * returned with a silent (zero) tail instead of copying; for an hour-long call that
-     * avoids briefly holding a second ~230 MB array.
+     * The samples collected, followed by [minPadding] to [maxPadding] silent (zero) slots. When
+     * that many are unused, the buffer itself is returned instead of copying; for an hour-long
+     * call that avoids briefly holding a second ~230 MB array. Otherwise it's a copy followed by
+     * [minPadding] of them.
      */
-    fun toArray(maxPadding: Int = 0): FloatArray = if (data.size - size <= maxPadding) data else data.copyOf(size)
+    fun toArray(minPadding: Int = 0, maxPadding: Int = minPadding): FloatArray =
+        // Zeroed, as samples taken out with clear() may be left there.
+        if (data.size - size in minPadding..maxPadding) data.also { it.fill(0f, size) }
+        else FloatArray(size + minPadding).also { data.copyInto(it, endIndex = size) }
 }
 
 /**

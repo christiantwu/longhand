@@ -3,6 +3,7 @@ package io.github.christiantwu.longhand
 import io.github.christiantwu.longhand.engine.FloatBuilder
 import io.github.christiantwu.longhand.engine.StreamResampler
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import kotlin.math.PI
@@ -28,6 +29,29 @@ class ResamplerTest {
         assertEquals(20, reused.size) // same buffer, zero tail
         assertEquals(0f, reused[19])
         assertEquals(18, b.toArray(maxPadding = 1).size) // too much slack: exact copy
+    }
+
+    @Test fun builderLeavesSilenceAfterTheSamples() {
+        val b = FloatBuilder(20)
+        repeat(15) { b.add(1f) }
+        // Room for 3 to 6 slots of silence, and 5 are free: the buffer itself.
+        val reused = b.toArray(minPadding = 3, maxPadding = 6)
+        assertEquals(20, reused.size)
+        assertSame(reused, b.toArray(minPadding = 5))
+        assertEquals(List(15) { 1f } + List(5) { 0f }, reused.toList())
+        // Too little room, or too much: a copy with the least silence asked for.
+        assertEquals(List(15) { 1f } + List(6) { 0f }, b.toArray(minPadding = 6, maxPadding = 8).toList())
+        assertEquals(16, b.toArray(minPadding = 1, maxPadding = 3).size)
+    }
+
+    @Test fun builderSilenceIsSilentAfterBlocksWereTakenOut() {
+        val b = FloatBuilder(16)
+        repeat(10) { b.add(1f) }
+        b.clear()
+        repeat(2) { b.add(2f) }
+        // The first block's samples are still in the buffer, past the second's.
+        assertEquals(listOf(2f, 2f, 0f, 0f), b.toArray(minPadding = 2).toList())
+        assertEquals(listOf(2f, 2f) + List(14) { 0f }, b.toArray(minPadding = 2, maxPadding = 14).toList())
     }
 
     @Test fun builderGrowsPastInitialCapacity() {

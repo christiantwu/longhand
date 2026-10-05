@@ -6,6 +6,7 @@ import io.github.christiantwu.longhand.data.Recording
 import io.github.christiantwu.longhand.data.RecordingDao
 import io.github.christiantwu.longhand.data.SpeakerVoice
 import io.github.christiantwu.longhand.engine.AudioDecoder
+import io.github.christiantwu.longhand.engine.SegmentLogic
 import io.github.christiantwu.longhand.engine.Span
 import io.github.christiantwu.longhand.engine.VoiceAnalyzer
 import io.github.christiantwu.longhand.engine.VoiceMath
@@ -24,7 +25,9 @@ suspend fun learnVoicesFromAudio(context: Context, dao: RecordingDao, rec: Recor
     val segments = dao.segments(rec.id)
     if (segments.isEmpty()) return emptyMap()
     val audio = AudioDecoder.decode(context, rec.documentUri.toUri())
-    val turns = segments.map { Span(it.startMs / 1000f, it.endMs / 1000f, it.speaker) to audio.mono }
+    // Up to the end of the call: the samples end in silence after it.
+    val turns = SegmentLogic.upTo(segments.map { Span(it.startMs / 1000f, it.endMs / 1000f, it.speaker) }, audio.seconds)
+        .map { it to audio.mono }
     val voices = analyzer.voices(turns)
     dao.insertVoices(voices.toSpeakerVoices(rec.id))
     return voices

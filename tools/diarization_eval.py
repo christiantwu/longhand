@@ -4,7 +4,8 @@
 The steps mirror the app:
   1. decode, and resample to 16 kHz the way engine/Resampler.kt does (Kaiser-windowed sinc)
   2. diarize like engine/SpeakerSeparation.kt (pyannote segmentation 3.0 + TitaNet,
-     over-clustered with FastClustering threshold 0.8)
+     over-clustered with FastClustering threshold 0.8), with half a second of silence after the call
+     and what's found past its end cut off
   3. fingerprint and resolve the clusters into people like engine/SpeakerResolver.kt, and keep each
      person's voice as SpeakerSeparation does (VoiceAnalyzer.voices)
   4. merge each person's consecutive speech like SegmentLogic.merge
@@ -24,7 +25,7 @@ cut off just before the last person joins (a transferred call becomes an ordinar
 one), to catch spurious extra speakers.
 
 Steps 1-2 are cached per call in <samples>/.cache, keyed by the recording, the models, the
-sherpa-onnx version and the code of resample() and diarizer(), so --tune only redoes the cheap parts.
+sherpa-onnx version and the code of resample(), diarizer() and diarize(), so --tune only redoes the cheap parts.
 --tune leaves step 6 out (it fingerprints every window of every long turn again for each setting).
 Needs ffmpeg, numpy and sherpa-onnx (the version the app uses, 1.13.8).
 
@@ -107,6 +108,18 @@ def diarizer(models):
         embedding=sherpa_onnx.SpeakerEmbeddingExtractorConfig(model=f"{models}/embedding.onnx", num_threads=8),
         clustering=sherpa_onnx.FastClusteringConfig(num_clusters=-1, threshold=0.8),
         min_duration_on=0.3, min_duration_off=0.5))
+
+
+def diarize(audio, models):
+    """
+    Who spoke when, as SpeakerSeparation.monoTurns diarizes: the call followed by half a second of silence (the least
+    the app's decoded audio ends in, DecodedAudio.TAIL; without it, sherpa-onnx exits on some calls: "This segment is
+    too short"), with each span cut off at the call's end and those starting after it gone (SegmentLogic.upTo).
+    """
+    end = len(audio) / SR
+    padded = np.concatenate([audio, np.zeros(SR // 2, np.float32)])
+    segs = diarizer(models).process(padded).sort_by_start_time()
+    return [(round(s.start, 3), round(min(s.end, end), 3), s.speaker) for s in segs if s.start < end]
 
 
 class Fingerprints:
@@ -538,7 +551,8 @@ def steps_digest(models):
     """What steps 1-2 depend on besides the recording, so a change there can't reuse stale spans."""
     model_files = [(m, os.path.getsize(f"{models}/{m}"), os.path.getmtime(f"{models}/{m}"))
                    for m in ("segmentation.onnx", "embedding.onnx")]
-    text = inspect.getsource(resample) + inspect.getsource(diarizer) + sherpa_onnx.__version__ + repr(model_files)
+    text = (inspect.getsource(resample) + inspect.getsource(diarizer) + inspect.getsource(diarize)
+            + sherpa_onnx.__version__ + repr(model_files))
     return hashlib.sha1(text.encode()).hexdigest()[:8]
 
 
@@ -557,8 +571,7 @@ def load_call(name, samples, cache, models, cut=None):
     audio = resample(x, rate)
     if cut is not None:
         audio = audio[:int(cut * SR)]
-    segs = diarizer(models).process(audio).sort_by_start_time()
-    spans = [(round(s.start, 3), round(s.end, 3), s.speaker) for s in segs]
+    spans = diarize(audio, models)
     os.makedirs(cache, exist_ok=True)
     audio.tofile(audio_file)
     json.dump(spans, open(spans_file, "w"))

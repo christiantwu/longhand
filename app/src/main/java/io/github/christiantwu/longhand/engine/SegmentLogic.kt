@@ -28,6 +28,10 @@ object SegmentLogic {
         return out
     }
 
+    /** [spans] cut off at [end] (seconds), those starting there or after it gone. */
+    fun upTo(spans: List<Span>, end: Float): List<Span> =
+        spans.filter { it.start < end }.map { if (it.end > end) it.copy(end = end) else it }
+
     /**
      * Speaker turns made not to overlap, so that each moment is recognised once: turns heard on the mono mix that
      * overlap would have the overlap transcribed twice, the same words under both speakers.

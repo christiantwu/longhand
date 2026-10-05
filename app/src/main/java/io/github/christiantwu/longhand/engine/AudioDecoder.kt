@@ -11,11 +11,15 @@ import java.nio.ByteOrder
 const val MODEL_SAMPLE_RATE = 16_000
 
 /**
- * Decoded audio at 16 kHz. [channels] has one entry (mono) or two (stereo); the arrays may
- * end in a little silence beyond [sampleCount].
+ * Decoded audio at 16 kHz. [channels] has one entry (mono) or two (stereo), each the call's
+ * [sampleCount] samples followed by silence: from [AudioDecoder], at least [TAIL] of it. Only
+ * diarization hears that ([monoWithTail]); nothing else goes past [sampleCount].
  */
 class DecodedAudio(val channels: List<FloatArray>, val sampleCount: Int = channels[0].size) {
     val durationMs: Long get() = sampleCount * 1000L / MODEL_SAMPLE_RATE
+
+    /** The call's length in seconds. */
+    val seconds: Float get() = sampleCount.toFloat() / MODEL_SAMPLE_RATE
 
     /** Both channels averaged; the input to diarization when the channels aren't separate speakers. */
     val mono: FloatArray by lazy {
@@ -25,6 +29,26 @@ class DecodedAudio(val channels: List<FloatArray>, val sampleCount: Int = channe
             val r = channels[1]
             FloatArray(minOf(l.size, r.size)) { (l[it] + r[it]) * 0.5f }
         }
+    }
+
+    /**
+     * [mono] followed by at least [TAIL] samples of silence, as diarization hears it. It's [mono]
+     * itself when the arrays have that room, as [AudioDecoder]'s do, so the call isn't copied.
+     */
+    fun monoWithTail(): FloatArray = mono.let { if (it.size - sampleCount >= TAIL) it else it.copyOf(sampleCount + TAIL) }
+
+    companion object {
+        /**
+         * The least silence diarization hears after the call (half a second; usually about 1.5 s, the
+         * room the decoder's array has left). Without it, sherpa-onnx's
+         * diarization ends the whole app on some calls ("This segment is too short"): a speaker it
+         * hears at the very end of its last window, which runs past the end of the call, can have
+         * too little of the call left to fingerprint. On desktop, two calls with someone talking
+         * to the very end failed at 44 of 320 lengths near their end without it, and at none with it.
+         * It makes the crash much less likely, not impossible: a speaker heard starting well into the
+         * silence would still trigger it.
+         */
+        const val TAIL = MODEL_SAMPLE_RATE / 2
     }
 }
 
@@ -56,7 +80,8 @@ object AudioDecoder {
             val inFormat = extractor.getTrackFormat(track)
             val mime = inFormat.getString(MediaFormat.KEY_MIME)!!
             val durationUs = if (inFormat.containsKey(MediaFormat.KEY_DURATION)) inFormat.getLong(MediaFormat.KEY_DURATION) else 0L
-            val estimate = (durationUs / 1_000_000.0 * MODEL_SAMPLE_RATE).toInt() + MODEL_SAMPLE_RATE
+            // A second more than the stated length, in case it's short, then the silence after the call.
+            val estimate = (durationUs / 1_000_000.0 * MODEL_SAMPLE_RATE).toInt() + MODEL_SAMPLE_RATE + DecodedAudio.TAIL
 
             val codec = MediaCodec.createDecoderByType(mime)
             try {
@@ -150,7 +175,11 @@ object AudioDecoder {
         }
         if (builders.isEmpty()) error("Decoder produced no audio")
         resamplers.forEach { it.finish() }
-        return DecodedAudio(builders.map { it.toArray(maxPadding = 2 * MODEL_SAMPLE_RATE) }, builders[0].size)
+        // The buffers themselves, unless the stated length was over a second out: their unused room is the silence after
+        // the call.
+        val tail = DecodedAudio.TAIL
+        val channels = builders.map { it.toArray(minPadding = tail, maxPadding = 2 * MODEL_SAMPLE_RATE + tail) }
+        return DecodedAudio(channels, sampleCount = builders[0].size)
     }
 
     private fun sample(floats: java.nio.FloatBuffer?, shorts: java.nio.ShortBuffer?): Float =

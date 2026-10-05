@@ -41,6 +41,27 @@ class SeparationTest {
         assertEquals(listOf(0.4f, 0.2f), stereo.mono.toList())
     }
 
+    @Test fun diarizationHearsSilenceAfterTheCallWithoutACopy() {
+        val tail = DecodedAudio.TAIL
+        // As decoded: room for the silence after the call, in the arrays themselves.
+        val decoded = DecodedAudio(listOf(FloatArray(16_000 + tail + 300) { if (it < 16_000) 0.5f else 0f }), sampleCount = 16_000)
+        assertSame(decoded.channels[0], decoded.monoWithTail())
+        assertEquals(1_000L, decoded.durationMs)
+        assertEquals(1f, decoded.seconds)
+        val left = FloatArray(16_000 + tail) { if (it < 16_000) 0.2f else 0f }
+        val right = FloatArray(16_000 + tail) { if (it < 16_000) 0.4f else 0f }
+        val stereo = DecodedAudio(listOf(left, right), sampleCount = 16_000)
+        assertSame(stereo.mono, stereo.monoWithTail())
+        assertEquals(0f, stereo.mono[16_000])
+        // Made without that room: copied, with the silence after it.
+        val exact = DecodedAudio(listOf(FloatArray(16_000) { 0.5f }))
+        val heard = exact.monoWithTail()
+        assertEquals(16_000 + tail, heard.size)
+        assertEquals(0.5f, heard[15_999])
+        assertTrue(heard.drop(16_000).all { it == 0f })
+        assertEquals(16_000, exact.channels[0].size)
+    }
+
     @Test fun monoTurnsDontOverlapAndSpeakersLeftWithoutTurnsAreGone() {
         val first = floatArrayOf(1f, 0f)
         val stray = floatArrayOf(0f, 1f)
@@ -134,6 +155,8 @@ class SeparationTest {
     @Test fun speakersFromDetectionAreUsedOnlyForTheSameAudio() {
         val found = Separation(listOf(Separation.Turn(Span(0f, 1f, 0))), emptyMap(), listOf(0 to 16_000), sampleCount = 32_000, channels = 1)
         assertTrue(found.matches(DecodedAudio(listOf(FloatArray(32_000)))))
+        // Decoded again, with the silence after the call: still the same audio.
+        assertTrue(found.matches(DecodedAudio(listOf(FloatArray(32_000 + DecodedAudio.TAIL + 900)), sampleCount = 32_000)))
         // The file rewritten in place since: trimmed, or now in stereo.
         assertFalse(found.matches(DecodedAudio(listOf(FloatArray(30_000)))))
         assertFalse(found.matches(DecodedAudio(listOf(FloatArray(32_000), FloatArray(32_000)))))

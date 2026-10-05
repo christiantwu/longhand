@@ -35,7 +35,7 @@ and no server, and nothing is uploaded.
 - **Search and share.** Search by name, topic or words. Share a transcript as text or
   Markdown, or share the recording itself.
 - **Saves space, if you like.** Once a WAV recording is transcribed, Longhand can replace it
-  with a compressed copy about 16 times smaller. It's off by default.
+  with a compressed copy about 8 times smaller. It's off by default.
 - **Languages:** English, 25 European languages, Chinese, Japanese and Korean, or Hindi (with
   English, including calls that mix the two). Keep two or more, and each call is transcribed in
   the one it's in. Summaries are written in the call's language too. That was tested in German,
@@ -74,7 +74,7 @@ and no server, and nothing is uploaded.
   "Use call recording V2 (experimental)", then choose WAV as the recording format.
   Compressed recordings are transcribed noticeably less accurately. WAV takes about 115 MB an
   hour; with **Shrink WAV recordings after transcription** (Settings → Storage), each one is
-  replaced by a copy of about 7 MB an hour once it's transcribed (see "How it works").
+  replaced by a copy of about 14 MB an hour once it's transcribed (see "How it works").
 
 ## Battery
 
@@ -242,8 +242,13 @@ tests of the model, recognition took about 1.8 times as long as the European lan
       1. Decode to 16 kHz. Telephone audio (8 kHz) is upsampled with a windowed-sinc filter;
          linear interpolation left images above 4 kHz that hid speaker changes.
       2. Diarize (who spoke when), deliberately split too finely (`SpeakerResolver`), unless it
-         was done while detecting the call's language. Clusters with enough clean speech get a
-         voice fingerprint, and those that sound alike (scoring 0.64 or more against each other,
+         was done while detecting the call's language. Diarization hears the call followed by at
+         least half a second of silence, usually about 1.5 s (room left at the end of the decoded
+         audio, so the call isn't copied); without it, sherpa-onnx's diarization ends the app on
+         some calls, and with it that becomes much less likely, though not impossible. What it
+         finds in that silence is cut off. The desktop replay pads exactly 0.5 s, which moves its
+         scores by at most 0.2 points from what the app's longer silence gives. Clusters with enough clean speech get a voice
+         fingerprint, and those that sound alike (scoring 0.64 or more against each other,
          on average) merge into one person. A short cluster joins the closest voice, or becomes a
          speaker of its own when it sounds unlike everyone. Fragments too short to fingerprint go
          to the voice around them. The number of people isn't fixed, so a transferred call can
@@ -370,9 +375,11 @@ tests of the model, recognition took about 1.8 times as long as the European lan
    one file, and only the file is sent, with no title or summary.
 5. **Shrinking WAV recordings** (Settings → Storage → **Shrink WAV recordings after transcription**,
    off by default). Once a WAV call is transcribed, `ShrinkWorker` replaces it with a compressed copy
-   in the format the Phone app's own AAC option records: AAC-LC in an `.m4a` file, mono, at 16 kHz
-   and 16 kbit/s. The Phone app's WAVs (16-bit mono at 16 kHz) come out about 16 times smaller, about
-   7 MB an hour instead of 115 MB. A stereo WAV keeps both channels, at 16 kbit/s each, and one
+   in the format of the Phone app's own AAC option: AAC-LC in an `.m4a` file, mono, at 16 kHz, but at
+   32 kbit/s rather than its 16 (at 16 kbit/s two similar voices on a test call became one speaker when
+   it was transcribed again; at 24 and up they stayed two). The Phone app's WAVs (16-bit mono at 16 kHz)
+   come out about 8 times smaller, about 14 MB an hour instead of 115 MB. A stereo WAV keeps both
+   channels, at 32 kbit/s each, and one
    recorded above 16 kHz comes down to it, the rate calls are transcribed at. The transcript keeps the
    accuracy it got from the WAV, and so do its summary, edits and voices, since nothing is transcribed
    again. The cost: a later **Transcribe again** works from the compressed copy, which is transcribed
@@ -462,7 +469,7 @@ The thresholds in `SpeakerResolver` were tuned on three real calls (two people, 
 transferred calls with three). Each was also scored cut off before the transfer, to give
 two-person cases. The old pipeline put 58% of the labelled speech on the wrong speaker in the
 worst call. The current one, scored so that each moment counts for one speaker only, gets 96.1%
-right in the two-person call, 95.2% and 95.6% in the transferred calls, and 97.9% and 93.7% in
+right in the two-person call, 95.2% and 95.7% in the transferred calls, and 97.9% and 93.7% in
 them cut off before the transfer, each with the right number of people. A fourth labelled call,
 in which one person's voice changes partway through, comes out 85.8% right, with three speakers
 for its two people: the changed voice is a speaker of its own, which **Same person as…** joins
@@ -471,7 +478,7 @@ went to the owner instead, putting someone else's words under "You" (86.4% right
 speakers). No other call changes between the two.
 
 Splitting turns by voice raised the first transferred call from 93.8% to 95.2% (95.6% to 97.9%
-cut off) and the changed-voice call from 83.4% to 85.8%, and left the others' scores as they
+cut off) and the changed-voice call from 83.5% to 85.8%, and left the others' scores as they
 were. A 1.5 s window takes about 10 ms to fingerprint on a desktop CPU, so splitting adds
 roughly 1–4 minutes per hour of call on a phone.
 

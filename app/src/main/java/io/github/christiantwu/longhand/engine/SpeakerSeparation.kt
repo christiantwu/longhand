@@ -115,12 +115,14 @@ class SpeakerSeparation(context: Context) : Closeable {
     /** Who spoke when, from voice clustering over the whole call. */
     private fun monoTurns(audio: DecodedAudio, owner: FloatArray?, onProgress: (Float) -> Unit, isStopped: () -> Boolean): Separation {
         val samples = audio.mono
-        val raw = diarizer.processWithCallback(samples, DiarizationProgress(SHARE * DIARIZATION_SHARE, onProgress), 0L)
-            .map { Span(it.start, it.end, it.speaker) }
+        // Diarized with the silence after the call (DecodedAudio.TAIL); what it finds there is cut off.
+        val progress = DiarizationProgress(SHARE * DIARIZATION_SHARE, onProgress)
+        val heard = diarizer.processWithCallback(audio.monoWithTail(), progress, 0L).map { Span(it.start, it.end, it.speaker) }
+        val raw = SegmentLogic.upTo(heard, audio.seconds)
         if (isStopped()) throw CancellationException()
         // Very short or single-voice clips can come back empty; fall back to plain speech detection.
         if (raw.isEmpty()) {
-            return ofTurns(SegmentLogic.merge(speechSpans(samples, 0, samples.size, speaker = 0)).map { Separation.Turn(it) }, audio)
+            return ofTurns(SegmentLogic.merge(speechSpans(samples, 0, audio.sampleCount, speaker = 0)).map { Separation.Turn(it) }, audio)
         }
 
         val fingerprints = SpeakerResolver.fingerprintPlan(raw)
@@ -133,7 +135,7 @@ class SpeakerSeparation(context: Context) : Closeable {
         val voices = resolved.voices + voiceAnalyzer.voices(SegmentLogic.merge(resolved.spans).map { it to samples })
         // Everything diarization heard anyone say, padded as recognition pads speech: it hears quieter and noisier
         // voices than speech detection does.
-        val speech = CallLanguage.speech(raw, samples.size, SpeechRanges.PAD_BEFORE, SpeechRanges.PAD_AFTER)
+        val speech = CallLanguage.speech(raw, audio.sampleCount, SpeechRanges.PAD_BEFORE, SpeechRanges.PAD_AFTER)
         val found = Separation.mono(resolved.spans, voices, speech) { turns, theirs ->
             splitByVoice(samples, turns, theirs, onProgress, isStopped)
         }
@@ -189,7 +191,7 @@ class SpeakerSeparation(context: Context) : Closeable {
      * they say in them that nobody says over.
      */
     private fun ofTurns(turns: List<Separation.Turn>, audio: DecodedAudio): Separation {
-        val found = Separation(turns, emptyMap(), CallLanguage.speech(turns.map { it.span }, audio.channels.minOf { it.size }))
+        val found = Separation(turns, emptyMap(), CallLanguage.speech(turns.map { it.span }, audio.sampleCount))
         return Separation(turns, voiceAnalyzer.voices(found.turnsIn(audio)), found.speech)
     }
 

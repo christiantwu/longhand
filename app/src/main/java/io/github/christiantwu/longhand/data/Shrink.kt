@@ -9,9 +9,11 @@ import kotlin.math.abs
  * what the compressed copy is called and how it's encoded, when it counts as a faithful copy of the WAV, and what's done
  * about a swap of the two that was cut short.
  *
- * The copy is AAC-LC in an MPEG-4 (.m4a) file, as the GrapheneOS Phone app records with its own AAC option: one channel
- * of 16 kbit/s at 16 kHz, the rate its WAV option records at. Those WAVs (16-bit mono PCM at 16 kHz, 256 kbit/s) come
- * out about 16 times smaller. A stereo WAV keeps both channels (each may be one speaker), at 16 kbit/s each.
+ * The copy is AAC-LC in an MPEG-4 (.m4a) file, the format of the GrapheneOS Phone app's own AAC option, at 16 kHz (the
+ * rate its WAV option records at) but twice that option's 16 kbit/s: at 16 kbit/s two similar voices on a test call
+ * became one speaker when it was transcribed again, at 24 kbit/s and up they stayed two. Those WAVs (16-bit mono PCM at
+ * 16 kHz, 256 kbit/s) come out about 8 times smaller. A stereo WAV keeps both channels (each may be one speaker), at
+ * 32 kbit/s each.
  */
 object Shrink {
 
@@ -21,8 +23,8 @@ object Shrink {
     /** The sample rate of the copy, unless the WAV's is lower and AAC takes it as it is. */
     const val SAMPLE_RATE = 16_000
 
-    /** The copy's bit rate for each channel, as the Phone app's AAC option. */
-    const val BITS_PER_CHANNEL = 16_000
+    /** The copy's bit rate for each channel: twice the Phone app's AAC option, so speakers stay apart if it's transcribed again. */
+    const val BITS_PER_CHANNEL = 32_000
 
     /** Rates AAC-LC codes as they are, up to [SAMPLE_RATE]: a WAV at one of them keeps its rate. */
     private val keptRates = setOf(8_000, 11_025, 12_000, SAMPLE_RATE)

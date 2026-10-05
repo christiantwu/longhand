@@ -98,26 +98,26 @@ class ShrinkTest {
         assertFalse(Shrink.isPart("CallRecord_20261004-101500_+15555550123xm4a.part", copy))
     }
 
-    @Test fun thePhoneAppsWavsBecomeItsOwnAacFormat() {
-        // The Phone app's WAV is 16-bit mono at 16 kHz; its AAC option is AAC-LC, mono, 16 kHz, 16 kbit/s.
-        assertEquals(Shrink.Format(16_000, 1, 16_000), Shrink.format(16_000, 1))
-        assertEquals(16, Shrink.ratio(16_000))
+    @Test fun thePhoneAppsWavsBecomeAacAtSixteenKilohertz() {
+        // The Phone app's WAV is 16-bit mono at 16 kHz; the copy is AAC-LC, mono, 16 kHz, at twice its AAC option's 16 kbit/s.
+        assertEquals(Shrink.Format(16_000, 1, 32_000), Shrink.format(16_000, 1))
+        assertEquals(8, Shrink.ratio(16_000))
         assertEquals(115L, Shrink.megabytesPerHour(16_000 * 16))
-        assertEquals(7L, Shrink.megabytesPerHour(Shrink.BITS_PER_CHANNEL))
+        assertEquals(14L, Shrink.megabytesPerHour(Shrink.BITS_PER_CHANNEL))
     }
 
     @Test fun otherWavsKeepTheirChannelsAndALowRate() {
         // Each channel may be one speaker: both are kept, at the same bit rate each.
-        assertEquals(Shrink.Format(16_000, 2, 32_000), Shrink.format(16_000, 2))
-        assertEquals(Shrink.Format(8_000, 1, 16_000), Shrink.format(8_000, 1))
-        assertEquals(Shrink.Format(11_025, 1, 16_000), Shrink.format(11_025, 1))
+        assertEquals(Shrink.Format(16_000, 2, 64_000), Shrink.format(16_000, 2))
+        assertEquals(Shrink.Format(8_000, 1, 32_000), Shrink.format(8_000, 1))
+        assertEquals(Shrink.Format(11_025, 1, 32_000), Shrink.format(11_025, 1))
         // Higher rates come down to 16 kHz, what calls are transcribed at; a rate AAC doesn't code goes up to it.
         assertEquals(16_000, Shrink.format(48_000, 1)!!.sampleRate)
         assertEquals(16_000, Shrink.format(44_100, 2)!!.sampleRate)
         assertEquals(16_000, Shrink.format(9_600, 1)!!.sampleRate)
         assertNull(Shrink.format(16_000, 3))
         assertNull(Shrink.format(16_000, 0))
-        assertEquals(48, Shrink.ratio(48_000))
+        assertEquals(24, Shrink.ratio(48_000))
     }
 
     private val wav = Shrink.Stats(durationMs = 600_000, channels = 1, rms = 0.05)

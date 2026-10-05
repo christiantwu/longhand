@@ -12,6 +12,7 @@ import io.github.christiantwu.longhand.data.RecordingStatus
 import io.github.christiantwu.longhand.data.Settings
 import io.github.christiantwu.longhand.engine.AudioDecoder
 import io.github.christiantwu.longhand.engine.Models
+import io.github.christiantwu.longhand.engine.SegmentLogic
 import io.github.christiantwu.longhand.engine.Span
 import io.github.christiantwu.longhand.engine.VoiceAnalyzer
 import io.github.christiantwu.longhand.engine.VoiceProfile
@@ -41,7 +42,9 @@ class VoiceRefreshWorker(context: Context, params: WorkerParameters) : Coroutine
                     val lines = dao.segments(id)
                     // The stored lines no longer overlap (a short "yeah" said over someone is left in their line), so a
                     // voice re-learned here can hold a moment of someone else; the ones learned when transcribing don't.
-                    val voices = analyzer.voices(lines.map { Span(it.startMs / 1000f, it.endMs / 1000f, it.speaker) to audio.mono })
+                    // Up to the end of the call: the samples end in silence after it.
+                    val spans = SegmentLogic.upTo(lines.map { Span(it.startMs / 1000f, it.endMs / 1000f, it.speaker) }, audio.seconds)
+                    val voices = analyzer.voices(spans.map { it to audio.mono })
                     dao.replaceVoices(id, rec.transcribedAt, lines, voices.toSpeakerVoices(id))
                 }
             }

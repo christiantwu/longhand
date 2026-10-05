@@ -85,10 +85,13 @@ class TranscriptionEngine(context: Context, speech: Models.Set) : Closeable {
         // Speaker turns, each with the samples it is recognised from (a channel, or the mono mix).
         val turns = separation.turnsIn(audio)
 
+        // The samples end in silence after the call (DecodedAudio.TAIL), which isn't recognised.
+        val length = audio.sampleCount
+
         // Long turns are cut at pauses into contiguous pieces, so recognition memory stays
         // bounded without dropping any audio between pieces.
         val pieces = turns.flatMap { (turn, samples) ->
-            splitTurn(turn, samples).map { (a, b) -> Span(a, b, turn.speaker) to samples }
+            splitTurn(turn, samples, length).map { (a, b) -> Span(a, b, turn.speaker) to samples }
         }
 
         val lines = ArrayList<TranscriptLine>()
@@ -109,8 +112,8 @@ class TranscriptionEngine(context: Context, speech: Models.Set) : Closeable {
         for (group in order.chunked(batch)) {
             if (isStopped()) throw CancellationException()
             val clips = group.mapNotNull { (span, samples) ->
-                val from = (span.start * SR).toInt().coerceIn(0, samples.size)
-                val to = (span.end * SR).toInt().coerceIn(from, samples.size)
+                val from = (span.start * SR).toInt().coerceIn(0, length)
+                val to = (span.end * SR).toInt().coerceIn(from, length)
                 if (to - from >= MIN_PIECE_SAMPLES) span to samples.copyOfRange(from, to) else null
             }
             val results = streaming?.recognize(clips.map { it.second }, isStopped, step) ?: clips.map { recognize(it.second) }
@@ -126,10 +129,13 @@ class TranscriptionEngine(context: Context, speech: Models.Set) : Closeable {
         return TranscriptResult(lines, separation.voices)
     }
 
-    /** A turn as-is, or cut in the middle of pauses when it is longer than [MAX_PIECE_SEC]. */
-    private fun splitTurn(turn: Span, samples: FloatArray): List<Pair<Float, Float>> {
+    /**
+     * A turn as-is, or cut in the middle of pauses when it is longer than [MAX_PIECE_SEC]. The call is the first [length]
+     * of [samples].
+     */
+    private fun splitTurn(turn: Span, samples: FloatArray, length: Int): List<Pair<Float, Float>> {
         if (turn.duration <= MAX_PIECE_SEC) return listOf(turn.start to turn.end)
-        val speech = speechRanges(samples, (turn.start * SR).toInt(), minOf((turn.end * SR).toInt(), samples.size))
+        val speech = speechRanges(samples, (turn.start * SR).toInt(), minOf((turn.end * SR).toInt(), length))
         val pauses = speech.zipWithNext { a, b -> (a.second / SR) to (b.first / SR) }
         return SegmentLogic.splitAtPauses(turn.start, turn.end, pauses, MAX_PIECE_SEC)
     }
