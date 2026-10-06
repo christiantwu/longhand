@@ -8,6 +8,8 @@
 
 <p align="center"><a href="https://github.com/christiantwu/longhand/releases/latest"><b>Download the latest APK</b></a></p>
 
+<p align="center"><a href="https://apps.obtainium.imranr.dev/redirect.html?r=obtainium://add/https://github.com/christiantwu/longhand"><img src="https://raw.githubusercontent.com/ImranR98/Obtainium/main/assets/graphics/badge_obtainium.png" alt="Get it on Obtainium" height="54"></a></p>
+
 Longhand turns your recorded phone calls into transcripts you can read, search and share:
 who said what, when, and a short summary of what was agreed. It's made for GrapheneOS,
 whose Phone app can record calls, and it does all its work on the phone. There's no account
@@ -95,7 +97,10 @@ right after you move lines between speakers or confirm your own voice.
 ## Install
 
 Download `longhand-<version>.apk` from the
-[latest release](https://github.com/christiantwu/longhand/releases/latest). Release APKs are
+[latest release](https://github.com/christiantwu/longhand/releases/latest), or, to be told about
+new versions and update in a tap, add Longhand to
+[Obtainium](https://github.com/ImranR98/Obtainium) with the button at the top (or by adding
+`https://github.com/christiantwu/longhand` in Obtainium yourself). Release APKs are
 signed with this certificate (SHA-256):
 
     10:33:66:AD:3D:78:A9:AC:CC:71:AC:03:41:B4:88:4F:6D:17:31:18:CF:7D:BA:7A:43:44:5C:CC:AF:07:6E:27
