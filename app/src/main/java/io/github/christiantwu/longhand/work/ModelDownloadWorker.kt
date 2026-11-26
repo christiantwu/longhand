@@ -16,13 +16,13 @@ import java.io.FileOutputStream
 import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
-import java.security.MessageDigest
 
 /**
  * Downloads one set of models (speech for one language 290–730 MB, language detection 160 MB, summaries ~2.6 GB), or
  * what's missing of it: for an installed set, an improved file that replaces an earlier one (see [Models.ModelFile.replaces]).
  * Partial files are resumed, and every file's SHA-256 is checked before it is put in place,
- * so a broken download never reaches the engine.
+ * so a broken download never reaches the engine ([VerifiedDownload]). A dropped connection is tried again; a server
+ * whose file isn't the expected one ([WrongFileException]) fails at once, since trying again would fetch the same bytes.
  */
 class ModelDownloadWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
 
@@ -82,11 +82,8 @@ class ModelDownloadWorker(context: Context, params: WorkerParameters) : Coroutin
                     return Result.failure(workDataOf(ERROR to notEnoughStorage(needed + SPACE_MARGIN - free, removable)))
                 }
                 val base = done
-                // A complete .part (the app stopped before renaming it) only needs checking.
-                if (part.length() < f.sizeBytes) download(f.url, part) { bytes -> done = base + bytes; report(done) }
-                if (part.length() != f.sizeBytes || sha256(part) != f.sha256) {
-                    part.delete()
-                    throw IOException("Checksum mismatch for ${f.path}")
+                VerifiedDownload.run(part, f.sizeBytes, f.sha256, f.path) {
+                    download(f, part) { bytes -> done = base + bytes; report(done) }
                 }
                 if (!part.renameTo(target)) throw IOException("Could not save ${f.path}")
                 done = base + f.sizeBytes
@@ -108,6 +105,9 @@ class ModelDownloadWorker(context: Context, params: WorkerParameters) : Coroutin
                 Work.updateLanguageId(applicationContext)
             }
             Result.success()
+        } catch (e: WrongFileException) {
+            Log.w(TAG, "model download failed: ${e.path} on the server isn't the expected file")
+            Result.failure(workDataOf(ERROR to e.message))
         } catch (e: Exception) {
             Log.w(TAG, "model download failed", e)
             if (runAttemptCount < 5) Result.retry() else Result.failure(workDataOf(ERROR to (e.message ?: "Download failed")))
@@ -130,8 +130,19 @@ class ModelDownloadWorker(context: Context, params: WorkerParameters) : Coroutin
         runCatching { setForeground(Work.foregroundInfo(Work.NOTIF_DOWNLOAD, n, longProcessing = false)) }
     }
 
-    /** Appends to [part], resuming with an HTTP Range request when it already has data. */
-    private suspend fun download(url: String, part: File, onBytes: suspend (Long) -> Unit) {
+    /** Appends [f] to [part], resuming with an HTTP Range request when it already has data. */
+    private suspend fun download(f: Models.ModelFile, part: File, onBytes: suspend (Long) -> Unit) {
+        // A range the server can't satisfy means the partial file is bad: it's deleted, and the file asked for whole.
+        if (!request(f, part, onBytes) && !request(f, part, onBytes)) throw IOException("HTTP 416 for ${f.url}")
+    }
+
+    /**
+     * One request for [f], appended to [part]. False if the server couldn't satisfy the range asked for; [part] is then
+     * deleted. Before any of it is read, the size the server gives for the whole file is checked: a different one is
+     * another file ([WrongFileException]), and hundreds of MB aren't downloaded to find that out.
+     */
+    private suspend fun request(f: Models.ModelFile, part: File, onBytes: suspend (Long) -> Unit): Boolean {
+        val url = f.url
         var existing = part.length()
         val conn = URL(url).openConnection() as HttpURLConnection
         conn.instanceFollowRedirects = true
@@ -139,12 +150,23 @@ class ModelDownloadWorker(context: Context, params: WorkerParameters) : Coroutin
         conn.readTimeout = 60_000
         if (existing > 0) conn.setRequestProperty("Range", "bytes=$existing-")
         try {
-            val code = conn.responseCode
-            if (code == HttpURLConnection.HTTP_OK) existing = 0 // server ignored Range; start over
-            else if (code == 416) { // range not satisfiable: the partial file is bad, so start again
+            val whole = when (val code = conn.responseCode) {
+                HttpURLConnection.HTTP_OK -> {
+                    existing = 0 // the whole file: asked for, or the server ignored Range, so start over
+                    conn.contentLengthLong
+                }
+                HttpURLConnection.HTTP_PARTIAL -> VerifiedDownload.wholeSize(conn.getHeaderField("Content-Range"))
+                416 -> {
+                    part.delete()
+                    return false
+                }
+                else -> throw IOException("HTTP $code for $url")
+            }
+            // Unknown (-1) when the server doesn't say, e.g. for a response it compresses.
+            if (whole >= 0 && whole != f.sizeBytes) {
                 part.delete()
-                throw IOException("HTTP 416 for $url")
-            } else if (code != HttpURLConnection.HTTP_PARTIAL) throw IOException("HTTP $code for $url")
+                throw WrongFileException(f.path)
+            }
             conn.inputStream.use { input ->
                 FileOutputStream(part, existing > 0).use { out ->
                     val buf = ByteArray(1 shl 16)
@@ -159,22 +181,10 @@ class ModelDownloadWorker(context: Context, params: WorkerParameters) : Coroutin
                     }
                 }
             }
+            return true
         } finally {
             conn.disconnect()
         }
-    }
-
-    private fun sha256(file: File): String {
-        val md = MessageDigest.getInstance("SHA-256")
-        file.inputStream().use { input ->
-            val buf = ByteArray(1 shl 16)
-            while (true) {
-                val n = input.read(buf)
-                if (n < 0) break
-                md.update(buf, 0, n)
-            }
-        }
-        return md.digest().joinToString("") { "%02x".format(it) }
     }
 
     companion object {

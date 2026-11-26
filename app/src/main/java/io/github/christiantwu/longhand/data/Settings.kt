@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -46,6 +47,11 @@ data class AppSettings(
      * default: it changes files in the recordings folder, and "Transcribe again" then works from the compressed copy.
      */
     val shrinkWav: Boolean = false,
+    /**
+     * The app version (versionCode) whose folder check last looked at the models, 0 before any has. A newer version's
+     * first check downloads what the chosen language is missing, even after a failure (Work.updateModels).
+     */
+    val modelsVersion: Int = 0,
 )
 
 private val Context.dataStore by preferencesDataStore("settings")
@@ -66,6 +72,7 @@ class Settings(private val context: Context) {
         val editTipSeen = booleanPreferencesKey("edit_tip_seen")
         val summariesInCallLanguage = booleanPreferencesKey("summaries_in_call_language")
         val shrinkWav = booleanPreferencesKey("shrink_wav")
+        val modelsVersion = intPreferencesKey("models_version")
     }
 
     val flow: Flow<AppSettings> = context.dataStore.data.map(::from)
@@ -93,6 +100,7 @@ class Settings(private val context: Context) {
     suspend fun setEditTipSeen(v: Boolean) = set(Keys.editTipSeen, v)
     suspend fun setSummariesInCallLanguage(v: Boolean) = set(Keys.summariesInCallLanguage, v)
     suspend fun setShrinkWav(v: Boolean) = set(Keys.shrinkWav, v)
+    suspend fun setModelsVersion(v: Int) = set(Keys.modelsVersion, v)
 
     companion object {
         fun from(p: Preferences) = AppSettings(
@@ -110,6 +118,7 @@ class Settings(private val context: Context) {
             editTipSeen = p[Keys.editTipSeen] ?: false,
             summariesInCallLanguage = p[Keys.summariesInCallLanguage] ?: true,
             shrinkWav = p[Keys.shrinkWav] ?: false,
+            modelsVersion = p[Keys.modelsVersion] ?: 0,
         )
     }
 }

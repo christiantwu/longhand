@@ -22,6 +22,7 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import androidx.work.workDataOf
+import io.github.christiantwu.longhand.BuildConfig
 import io.github.christiantwu.longhand.R
 import io.github.christiantwu.longhand.data.Settings
 import io.github.christiantwu.longhand.engine.Models
@@ -162,17 +163,38 @@ object Work {
      * behind is deleted. A failed update keeps its error and Retry in Settings instead of starting over at every check;
      * WorkManager forgets the failure after a day, and the next check tries again. Other languages kept on the phone
      * update once chosen again.
+     *
+     * The first check by a new version of the app also downloads a chosen language that isn't on the phone at all, and
+     * tries a failed download again ([downloadDue]): the new version may be what makes it work, as 0.11.0 was for
+     * English and the European languages, whose files 0.10.0 could no longer download.
      */
     suspend fun updateModels(context: Context) {
-        val chosen = Settings(context).current().language.set
+        val store = Settings(context)
+        val settings = store.current()
+        val chosen = settings.language.set
         // Also what a language switch cut short before it could clean up, e.g. half a download of the language left.
         Models.recognizerLock.withLock {
             Models.speechSets.forEach { Models.deleteObsolete(context, it) }
             Models.deleteAbandoned(context, chosen)
         }
         updateLanguageId(context)
-        if (Models.needsUpdate(context, chosen) && !failed(context, chosen)) downloadModels(context, chosen)
+        val newVersion = settings.modelsVersion != BuildConfig.VERSION_CODE
+        val sizes = Models.sizes(context)
+        val due = downloadDue(
+            missing = Models.missingBytes(chosen, sizes) > 0, update = Models.needsUpdate(chosen, sizes),
+            failed = failed(context, chosen), newVersion = newVersion,
+        )
+        if (due) downloadModels(context, chosen)
+        if (newVersion) store.setModelsVersion(BuildConfig.VERSION_CODE)
     }
+
+    /**
+     * The folder check should start the chosen language's download: it's [missing] files, and either this is a new
+     * version of the app's first check ([newVersion]), or the language works on an earlier file ([update]) and its last
+     * download hasn't [failed]. Otherwise a language that isn't on the phone waits for its Download or Retry in Settings.
+     */
+    fun downloadDue(missing: Boolean, update: Boolean, failed: Boolean, newVersion: Boolean): Boolean =
+        missing && (newVersion || (update && !failed))
 
     /**
      * Downloads the language detection model when it's wanted (Models.languageIdWanted: turned on, with two or more

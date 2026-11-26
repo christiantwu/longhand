@@ -175,13 +175,15 @@ commit `86891485`, and
 commit `1a468a35`): the whole pre-encode (subsampling) stage, its convolutions and output projection, and the
 depthwise convolutions are kept in full precision, where
 sherpa-onnx's own int8 encoders quantize them too. The recipe is
-[`tools/requantize_parakeet.py`](tools/requantize_parakeet.py). The modified encoders are downloaded
-from Longhand's GitHub release
-[models-1](https://github.com/christiantwu/longhand/releases/tag/models-1); the decoders, joiners and
-tokens are sherpa-onnx's int8 conversions, unmodified, downloaded from
+[`tools/requantize_parakeet.py`](tools/requantize_parakeet.py). The decoders, joiners and
+tokens are sherpa-onnx's int8 conversions, unmodified, as published at
 [csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8](https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8)
-and
-[csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8](https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8).
+(commit `1ab93235`) and
+[csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8](https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8)
+(commit `2bda32ec`), before those repositories' files were replaced by a newer conversion. All of
+them, the modified encoders and the unmodified decoders, joiners and tokens, are downloaded from
+Longhand's GitHub release
+[models-1](https://github.com/christiantwu/longhand/releases/tag/models-1).
 The models are licensed by NVIDIA under the
 [Creative Commons Attribution 4.0 International licence](https://creativecommons.org/licenses/by/4.0/),
 and are provided as-is, without warranties.

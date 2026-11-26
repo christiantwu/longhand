@@ -61,14 +61,54 @@ class ModelsTest {
         assertEquals("0db696759cccf970a2fb532948bd9c43af576c51551cfcff71ed955f926d8413", englishEncoder.sha256)
         // sherpa-onnx's int8 encoder, which every earlier version downloaded for English.
         assertEquals(Models.Replaced("parakeet/encoder.int8.onnx", 652_184_296), englishOld)
-        // The decoder, joiner and tokens are still sherpa-onnx's, where they always were.
+        // The decoder, joiner and tokens are still sherpa-onnx's, the same files at the same paths, so nobody downloads
+        // them again; they come from Longhand's release now that sherpa-onnx has replaced its own.
         for (kind in listOf("decoder", "joiner", "tokens")) {
             val f = SPEECH.part(kind)
             assertNull(f.replaces)
-            assertTrue(f.url, f.url.startsWith("https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8/"))
+            assertEquals("https://github.com/christiantwu/longhand/releases/download/models-1/parakeet-tdt-0.6b-v2-" +
+                f.path.removePrefix("parakeet/"), f.url)
         }
+        assertEquals(7_257_753L, SPEECH.part("decoder").sizeBytes)
+        assertEquals("b6bb64963457237b900e496ee9994b59294526439fbcc1fecf705b31a15c6b4e", SPEECH.part("decoder").sha256)
+        assertEquals("7946164367946e7f9f29a122407c3252b680dbae9a51343eb2488d057c3c43d2", SPEECH.part("joiner").sha256)
+        assertEquals("ec182b70dd42113aff6c5372c75cac58c952443eb22322f57bbd7f53977d497d", SPEECH.part("tokens").sha256)
         // About 720 MB with the speaker models.
         assertEquals(721, (SPEECH.totalBytes / 1_000_000).toInt())
+    }
+
+    @Test fun theEuropeanModelIsAllFromLonghandsRelease() {
+        for (kind in listOf("encoder", "decoder", "joiner", "tokens")) {
+            val f = MULTILINGUAL.part(kind)
+            assertEquals("https://github.com/christiantwu/longhand/releases/download/models-1/parakeet-tdt-0.6b-v3-" +
+                f.path.removePrefix("parakeet-v3/").replace(".repaired", ""), f.url)
+        }
+        assertEquals(11_845_275L, MULTILINGUAL.part("decoder").sizeBytes)
+        assertEquals("179e50c43d1a9de79c8a24149a2f9bac6eb5981823f2a2ed88d655b24248db4e", MULTILINGUAL.part("decoder").sha256)
+        assertEquals("3164c13fc2821009440d20fcb5fdc78bff28b4db2f8d0f0b329101719c0948b3", MULTILINGUAL.part("joiner").sha256)
+        assertEquals("d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d", MULTILINGUAL.part("tokens").sha256)
+    }
+
+    /**
+     * 0.10.0 downloaded Parakeet's decoders and joiners from a Hugging Face branch. sherpa-onnx replaced them there, and
+     * from then on English and the European languages failed their checksum on every new install. A file whose hash is
+     * written here must come from an address whose content can't be replaced under it.
+     */
+    @Test fun noDownloadFollowsABranch() {
+        val commit = Regex("""https://huggingface\.co/[^/]+/[^/]+/resolve/[0-9a-f]{40}/[^/]+""")
+        val files = Models.Set.entries.flatMap { it.files }.distinct()
+        for (f in files) {
+            assertTrue(f.url, f.url.startsWith("https://"))
+            assertFalse(f.url, "/resolve/main/" in f.url)
+            if ("huggingface.co" in f.url) assertTrue(f.url, commit.matches(f.url))
+            assertTrue(f.sha256, Regex("[0-9a-f]{64}").matches(f.sha256))
+        }
+        // What isn't on Hugging Face is a GitHub release asset: Longhand's own, or sherpa-onnx's two speaker models.
+        val elsewhere = files.filter { "huggingface.co" !in it.url }
+        assertEquals(listOf("embedding.onnx", "silero_vad.onnx"),
+            elsewhere.filter { it.url.startsWith("https://github.com/k2-fsa/sherpa-onnx/releases/download/") }.map { it.path })
+        assertEquals(12, elsewhere.count { it.url.startsWith("https://github.com/christiantwu/longhand/releases/download/models-1/") })
+        assertEquals(14, elsewhere.size)
     }
 
     @Test fun recognizerPartsByKind() {

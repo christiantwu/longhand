@@ -22,20 +22,27 @@ object Models {
     /** A file earlier versions of the app downloaded, recognised by its size. */
     data class Replaced(val path: String, val sizeBytes: Long)
 
+    // Every Hugging Face address names a commit, never a branch: a branch's files can be replaced, and were (Parakeet's
+    // decoders and joiners, in November 2026), after which nothing downloaded matches the hashes here any more.
     private const val HF = "https://huggingface.co/csukuangfj"
     private const val GH = "https://github.com/k2-fsa/sherpa-onnx/releases/download"
-    private const val PARAKEET = "$HF/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8/resolve/main"
-    private const val PARAKEET_V3 = "$HF/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/main"
-    private const val SENSE_VOICE = "$HF/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/main"
+    private const val SENSE_VOICE =
+        "$HF/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/2365baeacb507f821a0c8120fcee3d484dba7a07"
+    private const val SEGMENTATION =
+        "$HF/sherpa-onnx-pyannote-segmentation-3-0/resolve/9403a6902bb58e3d5ae8c7e77c3422de279db2e0"
     /** Models Longhand hosts itself, as assets of a GitHub release. */
     private const val LONGHAND = "https://github.com/christiantwu/longhand/releases/download/models-1"
+    /** The English and European languages models' files in that release, each name followed by "-encoder.int8.onnx" and so on. */
+    private const val PARAKEET = "$LONGHAND/parakeet-tdt-0.6b-v2"
+    private const val PARAKEET_V3 = "$LONGHAND/parakeet-tdt-0.6b-v3"
     /** The Hindi model's files in that release, each name followed by "-encoder.int8.onnx" and so on. */
     private const val NEMOTRON = "$LONGHAND/nemotron-3.5-asr-streaming-0.6b-1120ms"
     private const val WHISPER_BASE = "$HF/sherpa-onnx-whisper-base/resolve/bb53ee204431c90d314c1cc08d28d23e5b7927cc"
+    private const val QWEN = "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/e87f176479d0855a907a41277aca2f8ee7a09523"
 
     /** Speaker separation and pause detection, the same whichever language is transcribed. */
     private val SPEAKER_MODELS = listOf(
-        ModelFile("segmentation.onnx", "$HF/sherpa-onnx-pyannote-segmentation-3-0/resolve/main/model.onnx", 5_992_913,
+        ModelFile("segmentation.onnx", "$SEGMENTATION/model.onnx", 5_992_913,
             "220ad67ca923bef2fa91f2390c786097bf305bceb5e261d4af67b38e938e1079"),
         ModelFile("embedding.onnx", "$GH/speaker-recongition-models/nemo_en_titanet_small.onnx", 40_257_283,
             "ad4a1802485d8b34c722d2a9d04249662f2ece5d28a7a039063ca22f515a789e"),
@@ -53,17 +60,19 @@ object Models {
          * quantization of sherpa-onnx's fp32 export, made like the European languages' (tools/requantize_parakeet.py v2,
          * see [MULTILINGUAL]); on phone calls in the Phone app's default recording it makes about 11% fewer errors than
          * sherpa-onnx's int8 encoder. Earlier installs have that encoder, which keeps working until this one is in place.
+         * The decoder, joiner and tokens are sherpa-onnx's int8 conversion, unmodified, as it was when the encoder was made;
+         * Longhand hosts them too, since sherpa-onnx has replaced them with a newer conversion.
          */
         SPEECH(
             listOf(
-                ModelFile("parakeet/encoder.repaired.int8.onnx", "$LONGHAND/parakeet-tdt-0.6b-v2-encoder.int8.onnx",
+                ModelFile("parakeet/encoder.repaired.int8.onnx", "$PARAKEET-encoder.int8.onnx",
                     665_796_732, "0db696759cccf970a2fb532948bd9c43af576c51551cfcff71ed955f926d8413",
                     replaces = Replaced("parakeet/encoder.int8.onnx", 652_184_296)),
-                ModelFile("parakeet/decoder.int8.onnx", "$PARAKEET/decoder.int8.onnx", 7_257_753,
+                ModelFile("parakeet/decoder.int8.onnx", "$PARAKEET-decoder.int8.onnx", 7_257_753,
                     "b6bb64963457237b900e496ee9994b59294526439fbcc1fecf705b31a15c6b4e"),
-                ModelFile("parakeet/joiner.int8.onnx", "$PARAKEET/joiner.int8.onnx", 1_739_080,
+                ModelFile("parakeet/joiner.int8.onnx", "$PARAKEET-joiner.int8.onnx", 1_739_080,
                     "7946164367946e7f9f29a122407c3252b680dbae9a51343eb2488d057c3c43d2"),
-                ModelFile("parakeet/tokens.txt", "$PARAKEET/tokens.txt", 9_384,
+                ModelFile("parakeet/tokens.txt", "$PARAKEET-tokens.txt", 9_384,
                     "ec182b70dd42113aff6c5372c75cac58c952443eb22322f57bbd7f53977d497d"),
             ) + SPEAKER_MODELS,
             recognizerDir = "parakeet",
@@ -73,18 +82,19 @@ object Models {
          * 25 European languages, detected per call: Parakeet TDT 0.6B v3. The encoder is Longhand's own int8
          * quantization of sherpa-onnx's fp32 export (tools/requantize_parakeet.py v3): sherpa-onnx's int8 encoder
          * quantizes the pre-encode (subsampling) stage and the depthwise convolutions too, which costs a lot of accuracy, most on phone
-         * audio. Earlier installs have that encoder, which keeps working until this one is in place.
+         * audio. Earlier installs have that encoder, which keeps working until this one is in place. The decoder, joiner
+         * and tokens are hosted by Longhand as well, like English's.
          */
         MULTILINGUAL(
             listOf(
-                ModelFile("parakeet-v3/encoder.repaired.int8.onnx", "$LONGHAND/parakeet-tdt-0.6b-v3-encoder.int8.onnx",
+                ModelFile("parakeet-v3/encoder.repaired.int8.onnx", "$PARAKEET_V3-encoder.int8.onnx",
                     665_796_726, "013290f8001e0434a33bfc1f4ea2a9039107a878d894a51a212c48802b58efac",
                     replaces = Replaced("parakeet-v3/encoder.int8.onnx", 652_184_281)),
-                ModelFile("parakeet-v3/decoder.int8.onnx", "$PARAKEET_V3/decoder.int8.onnx", 11_845_275,
+                ModelFile("parakeet-v3/decoder.int8.onnx", "$PARAKEET_V3-decoder.int8.onnx", 11_845_275,
                     "179e50c43d1a9de79c8a24149a2f9bac6eb5981823f2a2ed88d655b24248db4e"),
-                ModelFile("parakeet-v3/joiner.int8.onnx", "$PARAKEET_V3/joiner.int8.onnx", 6_355_277,
+                ModelFile("parakeet-v3/joiner.int8.onnx", "$PARAKEET_V3-joiner.int8.onnx", 6_355_277,
                     "3164c13fc2821009440d20fcb5fdc78bff28b4db2f8d0f0b329101719c0948b3"),
-                ModelFile("parakeet-v3/tokens.txt", "$PARAKEET_V3/tokens.txt", 93_939,
+                ModelFile("parakeet-v3/tokens.txt", "$PARAKEET_V3-tokens.txt", 93_939,
                     "d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d"),
             ) + SPEAKER_MODELS,
             recognizerDir = "parakeet-v3",
@@ -137,8 +147,8 @@ object Models {
         /** Qwen 3.5 4B (Apache 2.0), Q4_0: the quantization llama.cpp runs fastest on phone CPUs. */
         SUMMARY(
             listOf(
-                ModelFile(SUMMARY_MODEL, "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/main/Qwen3.5-4B-Q4_0.gguf",
-                    2_583_221_408, "298fcb5fe7a77ccc79745ae24751560c5ac56874caff4bb39b1f2055bd72b8bb"),
+                ModelFile(SUMMARY_MODEL, "$QWEN/Qwen3.5-4B-Q4_0.gguf", 2_583_221_408,
+                    "298fcb5fe7a77ccc79745ae24751560c5ac56874caff4bb39b1f2055bd72b8bb"),
             ),
         );
 

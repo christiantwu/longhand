@@ -143,14 +143,21 @@ that you can turn off the app's Network permission in GrapheneOS. Summaries are 
 language of the call, or all in English with **Write summaries in the call's language** turned
 off in Settings.
 
+Every file is checked against the size and SHA-256 written in `engine/Models.kt` before it's used,
+and each is downloaded from an address whose content can't change under it: an asset of Longhand's
+[models-1](https://github.com/christiantwu/longhand/releases/tag/models-1) release, a fixed commit
+on Hugging Face, or, for the two speaker models, an asset of sherpa-onnx's releases. (Up to 0.10.0
+the English and European languages decoders came from a Hugging Face branch; when those files were
+replaced there in November 2026, both languages stopped downloading. Update to 0.11.0 or later.)
+
 **The English and European languages encoders are Longhand's own.** sherpa-onnx's int8
 conversions of Parakeet v2 and v3 quantize every convolution in the encoder, and that costs
 accuracy, most of all on phone audio. Longhand quantizes sherpa-onnx's full-precision conversions
 itself, keeping the whole pre-encode (subsampling) stage and the depthwise convolutions in full
 precision (`tools/requantize_parakeet.py`), and downloads the results from its own
 [GitHub release](https://github.com/christiantwu/longhand/releases/tag/models-1). The decoders,
-joiners and tokens are sherpa-onnx's, unchanged. The European languages model needed this most: on
-FLEURS, across all 25 languages, the word error rate fell from 18.1% to 11.9% on wideband audio and
+joiners and tokens are sherpa-onnx's, unchanged, and come from that release too. The European
+languages model needed this most: on FLEURS, across all 25 languages, the word error rate fell from 18.1% to 11.9% on wideband audio and
 from 34.0% to 14.9% on audio coded like the Phone app's default recordings; no language got worse.
 For English, on recorded phone conversations coded like the default recordings, it fell from 7.7%
 to 6.9%, about 11% fewer errors, with smaller gains elsewhere. Both are also about 30% faster in
@@ -555,12 +562,13 @@ adb shell rm -r /data/local/tmp/models
 The local `models/` directory mirrors the layout in `engine/Models.kt`:
 - `parakeet/encoder.repaired.int8.onnx` (the `models-1` release's
   `parakeet-tdt-0.6b-v2-encoder.int8.onnx` under that name, or rebuilt as below),
-  `parakeet/{decoder,joiner}.int8.onnx` and `parakeet/tokens.txt` (English), or
+  `parakeet/{decoder,joiner}.int8.onnx` and `parakeet/tokens.txt` (the release's
+  `parakeet-tdt-0.6b-v2-{decoder,joiner}.int8.onnx` and `-tokens.txt`; English), or
   `parakeet-v3/encoder.repaired.int8.onnx` (the `models-1` release's
   `parakeet-tdt-0.6b-v3-encoder.int8.onnx` under that name, or rebuilt as below),
-  `parakeet-v3/{decoder,joiner}.int8.onnx`
-  and `parakeet-v3/tokens.txt` (then choose "25 European languages" under Settings → Transcription
-  language), or `sensevoice/model.int8.onnx` and `sensevoice/tokens.txt` (then choose "Chinese,
+  `parakeet-v3/{decoder,joiner}.int8.onnx` and `parakeet-v3/tokens.txt` (the release's
+  `parakeet-tdt-0.6b-v3-…` files of those names; then choose "25 European languages" under
+  Settings → Transcription language), or `sensevoice/model.int8.onnx` and `sensevoice/tokens.txt` (then choose "Chinese,
   Japanese and Korean"), or `nemotron/{encoder,decoder,joiner}.int8.onnx` and `nemotron/tokens.txt`
   (the files of sherpa-onnx's `sherpa-onnx-nemotron-3.5-asr-streaming-0.6b-1120ms-int8-2026-06-11`
   archive; then choose "Hindi")
@@ -619,7 +627,10 @@ expose memory bugs in native code.
 
 ## Releasing
 
-1. Raise `versionCode` and `versionName` in `app/build.gradle.kts`, commit, and tag the commit
+1. Check that every model file is still where the app looks for it, with the size and hash it
+   expects (it asks the servers, and downloads the files under 64 MB):
+   `LONGHAND_LIVE_URLS=1 ./gradlew testDebugUnitTest --tests '*ModelUrlsLiveTest' --rerun`.
+   Then raise `versionCode` and `versionName` in `app/build.gradle.kts`, commit, and tag the commit
    `v<version>`. With `git status` clean on that tag, the tag is the source of the APK.
 2. Run `./gradlew assembleRelease` with the release key configured, and copy
    `app/build/outputs/apk/release/app-release.apk` to `dist/longhand-<version>.apk`.
