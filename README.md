@@ -36,6 +36,9 @@ and no server, and nothing is uploaded.
   else, and add common corrections, like “UV” → “Youvee”, for every new transcript.
 - **Search and share.** Search by name, topic or words. Share a transcript as text or
   Markdown, or share the recording itself.
+- **Gets around long lists.** Settings stays at the top of the calls list; once you scroll, so
+  do a title that takes you back to the top and a search button. With a few screens of calls or
+  more, a handle on the right edge drags through them and shows the month you're at.
 - **Saves space, if you like.** Once a WAV recording is transcribed, Longhand can replace it
   with a compressed copy about 8 times smaller. It's off by default.
 - **Languages:** English, 25 European languages, Chinese, Japanese and Korean, or Hindi (with

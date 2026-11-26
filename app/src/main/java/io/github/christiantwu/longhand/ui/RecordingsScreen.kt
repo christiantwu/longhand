@@ -3,6 +3,10 @@ package io.github.christiantwu.longhand.ui
 import android.Manifest
 import android.text.format.DateFormat
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -13,6 +17,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.foundation.layout.safeDrawingPadding
@@ -21,11 +26,13 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.InputChip
 import androidx.compose.material3.InputChipDefaults
@@ -33,18 +40,25 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -70,6 +84,7 @@ import io.github.christiantwu.longhand.engine.SegmentLogic
 import io.github.christiantwu.longhand.export.CallText
 import io.github.christiantwu.longhand.export.SearchMatch
 import io.github.christiantwu.longhand.work.Work
+import kotlinx.coroutines.launch
 import java.util.Calendar
 import java.util.Date
 
@@ -110,89 +125,182 @@ fun RecordingsScreen(vm: AppViewModel, onOpen: (id: Long, at: Long?, q: String?)
     fun waitsForCharger(rec: Recording) = device.loaded && speechReady && !device.charging && !rec.requested &&
         rec.status == RecordingStatus.PENDING && (settings?.chargingOnly == true || rec.lastModified < cutoff)
 
-    LazyColumn(
-        Modifier.fillMaxSize().safeDrawingPadding(),
-        state = listState,
-        contentPadding = PaddingValues(bottom = 32.dp),
-    ) {
-        item { AppBar(actions = { AppIconButton(Icons.Filled.Settings, "Settings", onSettings) }) }
-        item { ScreenTitle("Calls") }
-        item { SearchField(query, onChange = { vm.query.value = it }) }
-        person?.let { p ->
-            item {
-                InputChip(
-                    selected = true, onClick = { vm.person.value = null },
-                    label = { Text("Calls with ${p.name}", maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                    trailingIcon = { Icon(Icons.Filled.Close, null, Modifier.size(InputChipDefaults.IconSize)) },
-                    // Read as what it is, announced when it appears: the stock chip reads as a checked checkbox.
-                    modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp).clearAndSetSemantics {
-                        contentDescription = "Calls with ${p.name}"
-                        liveRegion = LiveRegionMode.Polite
-                        role = Role.Button
-                        onClick(label = "Clear filter") { vm.person.value = null; true }
-                    },
-                )
+    // The bar stays above the list, so Settings is always in reach. Once the title and the search field have scrolled
+    // away, the bar stands in for them: its own title goes back to the top, its search button to the search field.
+    val scope = rememberCoroutineScope()
+    val searchFocus = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    val titleGone by remember { derivedStateOf { listState.firstVisibleItemIndex > TITLE_ITEM } }
+    val searchGone by remember { derivedStateOf { listState.firstVisibleItemIndex > SEARCH_ITEM } }
+    val scrolled by remember { derivedStateOf { listState.canScrollBackward } }
+    // For the handle's bubble: when the call in each row was, by the row's key in the list.
+    val times = remember(groups) {
+        buildMap<Any, Long> {
+            for (group in groups) {
+                put(dayKey(group), group.rows.first().rec.lastModified)
+                for (row in group.rows) put(row.rec.id, row.rec.lastModified)
             }
         }
+    }
 
-        // Things that stop transcription first, then the queue.
-        item {
-            // Each notice brings its own space above, so there's no gap when there are none.
-            val above = Modifier.padding(top = 16.dp)
-            Column(Modifier.padding(horizontal = 16.dp)) {
-                if (!speechReady) Notice("Setup", "Transcription models are missing.", "Settings", onSettings, modifier = above)
-                // device.loaded: nothing is reported missing before the first check has run.
-                if (device.loaded && settings?.folderUri != null && !device.folderAccessible) {
-                    Notice("Folder", "Access to the recordings folder was lost.", "Settings", onSettings, modifier = above)
+    Column(Modifier.fillMaxSize().safeDrawingPadding()) {
+        CallsBar(
+            titleGone, searchGone, scrolled,
+            onTop = {
+                scope.launch {
+                    // From far down, most of the way in one step: animating past a thousand rows takes seconds.
+                    if (listState.firstVisibleItemIndex > NEAR_TOP) listState.scrollToItem(NEAR_TOP)
+                    listState.animateScrollToItem(0)
                 }
-                // For anyone who skipped the Phone step in setup. Without it, the 15-minute check still runs.
-                if (device.loaded && settings?.chargingOnly == false && settings?.phoneNoticeHidden == false && !device.phoneState) {
-                    Notice(
-                        "Right after each call",
-                        "Allow the Phone permission so Longhand can start about a minute after you hang up.",
-                        "Allow", askPhone, dismiss = "Hide", onDismiss = vm::hidePhoneNotice, modifier = above,
-                    )
+            },
+            onSearch = {
+                scope.launch {
+                    listState.scrollToItem(0)
+                    // The field is back in the list from the next frame on.
+                    withFrameNanos {}
+                    runCatching { searchFocus.requestFocus() }
+                    keyboard?.show()
                 }
-                // From every call: "Transcribe now" acts on all waiting calls, whatever is searched or filtered.
-                val pending = allRows.filter { it.rec.status == RecordingStatus.PENDING }
-                val busy = allRows.any {
-                    it.rec.status == RecordingStatus.PROCESSING || it.rec.detecting || it.rec.summaryStatus == SummaryStatus.PROCESSING
+            },
+            onSettings = onSettings,
+        )
+        Box(Modifier.weight(1f)) {
+            LazyColumn(
+                Modifier.fillMaxSize(),
+                state = listState,
+                contentPadding = PaddingValues(bottom = 32.dp),
+            ) {
+                // TITLE_ITEM and SEARCH_ITEM are these two's places in the list.
+                item { ScreenTitle("Calls") }
+                item { SearchField(query, onChange = { vm.query.value = it }, focus = searchFocus) }
+                person?.let { p ->
+                    item {
+                        InputChip(
+                            selected = true, onClick = { vm.person.value = null },
+                            label = { Text("Calls with ${p.name}", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            trailingIcon = { Icon(Icons.Filled.Close, null, Modifier.size(InputChipDefaults.IconSize)) },
+                            // Read as what it is, announced when it appears: the stock chip reads as a checked checkbox.
+                            modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp).clearAndSetSemantics {
+                                contentDescription = "Calls with ${p.name}"
+                                liveRegion = LiveRegionMode.Polite
+                                role = Role.Button
+                                onClick(label = "Clear filter") { vm.person.value = null; true }
+                            },
+                        )
+                    }
                 }
-                if (device.loaded && pending.isNotEmpty() && !busy && speechReady) {
-                    val older = if (device.charging) 0 else pending.count { it.rec.lastModified < cutoff }
-                    Notice(
-                        "${pending.size} waiting",
-                        when {
-                            settings?.chargingOnly == true -> "These will be transcribed while charging."
-                            older == pending.size -> "These are more than a day old, so they wait until the phone is charging."
-                            older > 0 -> "Calls from the last day will be transcribed shortly; older ones wait until the phone is charging."
-                            else -> "These will be transcribed shortly."
-                        },
-                        "Transcribe now", vm::transcribeNow, modifier = above,
-                    )
+
+                // Things that stop transcription first, then the queue.
+                item {
+                    // Each notice brings its own space above, so there's no gap when there are none.
+                    val above = Modifier.padding(top = 16.dp)
+                    Column(Modifier.padding(horizontal = 16.dp)) {
+                        if (!speechReady) Notice("Setup", "Transcription models are missing.", "Settings", onSettings, modifier = above)
+                        // device.loaded: nothing is reported missing before the first check has run.
+                        if (device.loaded && settings?.folderUri != null && !device.folderAccessible) {
+                            Notice("Folder", "Access to the recordings folder was lost.", "Settings", onSettings, modifier = above)
+                        }
+                        // For anyone who skipped the Phone step in setup. Without it, the 15-minute check still runs.
+                        if (device.loaded && settings?.chargingOnly == false && settings?.phoneNoticeHidden == false && !device.phoneState) {
+                            Notice(
+                                "Right after each call",
+                                "Allow the Phone permission so Longhand can start about a minute after you hang up.",
+                                "Allow", askPhone, dismiss = "Hide", onDismiss = vm::hidePhoneNotice, modifier = above,
+                            )
+                        }
+                        // From every call: "Transcribe now" acts on all waiting calls, whatever is searched or filtered.
+                        val pending = allRows.filter { it.rec.status == RecordingStatus.PENDING }
+                        val busy = allRows.any {
+                            it.rec.status == RecordingStatus.PROCESSING || it.rec.detecting || it.rec.summaryStatus == SummaryStatus.PROCESSING
+                        }
+                        if (device.loaded && pending.isNotEmpty() && !busy && speechReady) {
+                            val older = if (device.charging) 0 else pending.count { it.rec.lastModified < cutoff }
+                            Notice(
+                                "${pending.size} waiting",
+                                when {
+                                    settings?.chargingOnly == true -> "These will be transcribed while charging."
+                                    older == pending.size -> "These are more than a day old, so they wait until the phone is charging."
+                                    older > 0 -> "Calls from the last day will be transcribed shortly; older ones wait until the phone is charging."
+                                    else -> "These will be transcribed shortly."
+                                },
+                                "Transcribe now", vm::transcribeNow, modifier = above,
+                            )
+                        }
+                    }
+                }
+
+                if (rows.isEmpty()) item { EmptyState(search != null, person) }
+
+                groups.forEach { group ->
+                    item(key = dayKey(group)) {
+                        val minutes = group.rows.sumOf { it.rec.durationMs } / 60_000
+                        SectionHeader(
+                            group.label, Modifier.padding(start = 16.dp, end = 16.dp, top = 26.dp, bottom = 10.dp),
+                            trailing = "${group.rows.size} ${if (group.rows.size == 1) "call" else "calls"}" + if (minutes > 0) " · $minutes min" else "",
+                        )
+                    }
+                    itemsIndexed(group.rows, key = { _, row -> row.rec.id }) { i, row ->
+                        CallRowItem(
+                            row, groupShape(i, group.rows.size), waitsForCharger(row.rec), search,
+                            person = PersonFilter.of(row.rec), onPerson = { vm.person.value = it },
+                            onClick = { onOpen(row.rec.id, row.matchMs, row.matchQuery ?: search) },
+                            modifier = Modifier.padding(horizontal = 16.dp).padding(top = if (i > 0) GroupGap else 0.dp),
+                        )
+                    }
                 }
             }
+            FastScroller(
+                listState,
+                // The month the first call on screen was in; above the calls, the newest one's.
+                label = { key -> (times[key] ?: rows.firstOrNull()?.rec?.lastModified)?.let { DateFormat.format("MMM yyyy", it).toString() } },
+                modifier = Modifier.align(Alignment.TopEnd),
+            )
         }
+    }
+}
 
-        if (rows.isEmpty()) item { EmptyState(search != null, person) }
+/** Where the title and the search field are in the calls list. */
+private const val TITLE_ITEM = 0
+private const val SEARCH_ITEM = 1
+/** "Back to the top" jumps to this row before it animates the rest of the way. */
+private const val NEAR_TOP = 12
 
-        groups.forEach { group ->
-            item(key = "day-${group.label}-${group.rows.first().rec.id}") {
-                val minutes = group.rows.sumOf { it.rec.durationMs } / 60_000
-                SectionHeader(
-                    group.label, Modifier.padding(start = 16.dp, end = 16.dp, top = 26.dp, bottom = 10.dp),
-                    trailing = "${group.rows.size} ${if (group.rows.size == 1) "call" else "calls"}" + if (minutes > 0) " · $minutes min" else "",
-                )
-            }
-            itemsIndexed(group.rows, key = { _, row -> row.rec.id }) { i, row ->
-                CallRowItem(
-                    row, groupShape(i, group.rows.size), waitsForCharger(row.rec), search,
-                    person = PersonFilter.of(row.rec), onPerson = { vm.person.value = it },
-                    onClick = { onOpen(row.rec.id, row.matchMs, row.matchQuery ?: search) },
-                    modifier = Modifier.padding(horizontal = 16.dp).padding(top = if (i > 0) GroupGap else 0.dp),
-                )
-            }
-        }
+private fun dayKey(group: DayGroups.Group) = "day-${group.label}-${group.rows.first().rec.id}"
+
+/**
+ * The calls screen's top bar, which stays put above the list. At the top of the list it holds only Settings, as the
+ * title and the search field are right below. With the title scrolled away ([titleGone]) it shows "Calls", which goes
+ * back to the top ([onTop]); with the search field gone too ([searchGone]), a search button that goes to the field and
+ * opens the keyboard ([onSearch]). A line under it marks where the list goes under ([scrolled]).
+ */
+@Composable
+private fun CallsBar(
+    titleGone: Boolean, searchGone: Boolean, scrolled: Boolean,
+    onTop: () -> Unit, onSearch: () -> Unit, onSettings: () -> Unit,
+) {
+    val c = MaterialTheme.colorScheme
+    val line by animateFloatAsState(if (scrolled) 1f else 0f, label = "bar line")
+    Box {
+        AppBar(
+            navigation = {
+                AnimatedVisibility(titleGone, enter = fadeIn(), exit = fadeOut()) {
+                    // 12dp in from the bar's own 4dp, in line with the rows' edge; 48dp tall to tap.
+                    Box(
+                        Modifier.heightIn(min = 48.dp).clip(RoundedCornerShape(12.dp))
+                            .clickable(onClickLabel = "Go to the top", role = Role.Button, onClick = onTop)
+                            .padding(horizontal = 12.dp),
+                        contentAlignment = Alignment.CenterStart,
+                    ) { Text("Calls", style = MaterialTheme.typography.titleLarge, color = c.onSurface) }
+                }
+            },
+            actions = {
+                AnimatedVisibility(searchGone, enter = fadeIn(), exit = fadeOut()) {
+                    AppIconButton(Icons.Filled.Search, "Search calls", onSearch)
+                }
+                AppIconButton(Icons.Filled.Settings, "Settings", onSettings)
+            },
+        )
+        HorizontalDivider(Modifier.align(Alignment.BottomCenter).alpha(line), color = c.outlineVariant)
     }
 }
 
@@ -289,14 +397,14 @@ private fun subtitle(row: CallRow): Pair<String, Color> {
 }
 
 @Composable
-private fun SearchField(query: String, onChange: (String) -> Unit) {
+private fun SearchField(query: String, onChange: (String) -> Unit, focus: FocusRequester) {
     val c = MaterialTheme.colorScheme
     BasicTextField(
         value = query, onValueChange = onChange, singleLine = true,
         textStyle = MaterialTheme.typography.bodyLarge.copy(color = c.onSurface),
         cursorBrush = SolidColor(c.primary),
         modifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 18.dp).fillMaxWidth().height(56.dp)
-            .clip(CircleShape).background(c.surfaceContainerHigh),
+            .clip(CircleShape).background(c.surfaceContainerHigh).focusRequester(focus),
         decorationBox = { field ->
             Row(
                 // The clear button's own 48dp box pads its icon, so the end padding shrinks when it shows.
