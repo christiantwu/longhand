@@ -22,8 +22,8 @@ android {
         applicationId = "io.github.christiantwu.longhand"
         minSdk = 31
         targetSdk = 37
-        versionCode = 8
-        versionName = "0.10.0"
+        versionCode = 9
+        versionName = "0.11.0"
 
         // Phones only: the sherpa-onnx AAR ships four ABIs (~200 MB); keep arm64.
         // `-Pemulator` adds x86_64 for testing in the Android emulator.
